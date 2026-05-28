@@ -116,6 +116,29 @@ button {
   color: #2c3a42;
 }
 
+.notification-button {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+}
+
+.notification-button b {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--coral);
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
+}
+
 .nav-link.active,
 .nav-link:hover,
 .tab-button.active {
@@ -216,6 +239,104 @@ h3 {
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
+}
+
+.admin-profile-card,
+.profile-inline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.admin-profile-card {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.admin-profile-card p {
+  margin: 2px 0 0;
+}
+
+.nav-avatar,
+.profile-silhouette {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #edf2f4;
+  color: #41515a;
+  font-weight: 900;
+}
+
+.nav-avatar {
+  width: 28px;
+  height: 28px;
+  font-size: 12px;
+}
+
+.profile-silhouette {
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--line);
+}
+
+.notification-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: clamp(16px, 4vw, 48px);
+  z-index: 30;
+  width: min(390px, calc(100vw - 32px));
+  max-height: min(560px, calc(100vh - 110px));
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.notification-menu .panel-heading {
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.compact-action {
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.notification-item {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  text-align: left;
+}
+
+.notification-item strong,
+.notification-item span {
+  display: block;
+}
+
+.notification-item span {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.notification-item:not(.read) {
+  border-color: #9ccdc3;
+  background: #f1faf8;
+}
+
+.support-reply {
+  margin: 12px 0;
+  padding: 12px;
+  border-left: 4px solid var(--teal);
+  background: #f1faf8;
 }
 
 .primary-action,

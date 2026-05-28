@@ -10,9 +10,10 @@ const state = {
   vendorIds: [],
   adminPermissions: ["all"],
   notifications: [],
+  readNotifications: new Set(),
+  notificationOpen: false,
   supportTickets: [],
   categories: ["Oyun grubu", "Sanat atölyesi", "Spor", "Müzik", "Dans", "Drama", "Müze/gezi", "Bilim/STEM", "Doğa", "Ebeveyn-çocuk", "Tatil kampı", "Düzenli kurs"],
-  adminAvatar: "",
   authMode: "choice",
   signupRole: "parent",
   editingChildId: null,
@@ -276,9 +277,9 @@ function isParent() {
 
 function profileLabel() {
   if (!state.currentUser) return "Giriş";
-  if (isAdmin()) return "Admin";
+  if (isAdmin()) return state.authProfile?.full_name || "Admin";
   if (isVendor()) return "Satıcı";
-  return "Profil";
+  return state.authProfile?.full_name || "Profil";
 }
 
 function userInitials() {
@@ -291,8 +292,77 @@ function userInitials() {
     .join("");
 }
 
+function notificationItems() {
+  const items = state.notifications.map((item, index) => ({
+    id: item.id || `local-${index}-${item.text}`,
+    text: item.text,
+    meta: item.meta || "Bildirim",
+    route: item.route || "home",
+    tab: item.tab || "",
+    activityId: item.activityId || "",
+  }));
+
+  if (isAdmin()) {
+    state.vendors
+      .filter((vendor) => vendor.status === "pending")
+      .forEach((vendor) =>
+        items.push({
+          id: `admin-vendor-${vendor.id}`,
+          text: `${vendor.name} firma onayı bekliyor`,
+          meta: "Admin onayı",
+          route: "admin",
+          tab: "approvals",
+        }),
+      );
+    state.activities
+      .filter((activity) => activity.status === "pending")
+      .forEach((activity) =>
+        items.push({
+          id: `admin-activity-${activity.id}`,
+          text: `${activity.title} etkinlik onayı bekliyor`,
+          meta: getVendor(activity.vendorId)?.name || "Etkinlik",
+          route: "admin",
+          tab: "approvals",
+          activityId: activity.id,
+        }),
+      );
+  }
+
+  if (isVendor()) {
+    const vendor = currentVendor();
+    const vendorActivities = state.activities.filter((activity) => activity.vendorId === vendor?.id);
+    vendorActivities.forEach((activity) => {
+      const count = favoriteCount(activity.id);
+      if (count > 0) {
+        items.push({
+          id: `vendor-favorite-${activity.id}-${count}`,
+          text: `${activity.title} ${count} kişi tarafından favorilere eklendi`,
+          meta: "Favoriler",
+          route: "detail",
+          activityId: activity.id,
+        });
+      }
+    });
+    state.bookings
+      .filter((booking) => vendorActivities.some((activity) => activity.id === booking.activityId))
+      .slice(0, 8)
+      .forEach((booking) => {
+        const found = getSession(booking.sessionId);
+        items.push({
+          id: `vendor-booking-${booking.id}`,
+          text: `${found?.activity.title || "Etkinlik"} için yeni satın alma`,
+          meta: `${money(booking.totalAmount)} · ${booking.status}`,
+          route: "vendor",
+          tab: "bookings",
+        });
+      });
+  }
+
+  return items;
+}
+
 function unreadCount() {
-  return state.notifications.filter((item) => !item.read).length;
+  return notificationItems().filter((item) => !state.readNotifications.has(item.id)).length;
 }
 
 function currentVendor() {
@@ -551,6 +621,7 @@ function syncPathForRoute(route) {
 function setRoute(route, id) {
   state.route = route;
   state.selectedActivityId = id ?? state.selectedActivityId;
+  state.notificationOpen = false;
   document.querySelector(".primary-nav")?.classList.remove("open");
   syncPathForRoute(route);
   render();
@@ -601,6 +672,11 @@ function renderSupport() {
     renderAccessGate("Giriş gerekli", "Destek talebi oluşturmak için giriş yapın.");
     return;
   }
+  if (isAdmin()) {
+    state.adminTab = "support";
+    renderAdmin();
+    return;
+  }
   app.innerHTML = `
     <section class="section-shell">
       <div class="panel auth-panel">
@@ -619,13 +695,20 @@ function renderSupport() {
 
 function updateNav() {
   const authButton = document.querySelector("#authNav");
+  const notificationButton = document.querySelector("#notificationNav");
   const bookingsButton = document.querySelector('[data-route="bookings"]');
   const vendorButton = document.querySelector('[data-route="vendor"]');
+  const supportButton = document.querySelector('[data-route="support"]');
   if (bookingsButton) bookingsButton.hidden = !isParent();
   if (vendorButton) vendorButton.hidden = !isVendor();
+  if (supportButton) supportButton.hidden = isAdmin();
+  if (notificationButton) {
+    notificationButton.hidden = !state.currentUser;
+    notificationButton.innerHTML = `<span aria-hidden="true">🔔</span>${unreadCount() ? `<b>${unreadCount()}</b>` : ""}`;
+  }
   if (authButton) {
     authButton.innerHTML = state.currentUser
-      ? `<span class="nav-avatar">${state.adminAvatar && isAdmin() ? `<img src="${state.adminAvatar}" alt="Admin avatar" />` : userInitials()}</span><span>${profileLabel()}</span><span class="bell">🔔${unreadCount() ? `<b>${unreadCount()}</b>` : ""}</span>`
+      ? `<span class="nav-avatar" aria-hidden="true">${userInitials()}</span><span>${profileLabel()}</span>`
       : "Giriş";
     authButton.dataset.route = isAdmin() ? "admin" : "auth";
   }
@@ -633,6 +716,41 @@ function updateNav() {
   document.querySelectorAll(".nav-link").forEach((button) => {
     button.classList.toggle("active", button.dataset.route === state.route);
   });
+  notificationButton?.classList.toggle("active", state.notificationOpen);
+  renderNotificationMenu();
+}
+
+function renderNotificationMenu() {
+  document.querySelector("#notificationMenu")?.remove();
+  if (!state.notificationOpen || !state.currentUser) return;
+
+  const menu = document.createElement("div");
+  menu.id = "notificationMenu";
+  menu.className = "notification-menu";
+  const items = notificationItems();
+  menu.innerHTML = `
+    <div class="panel-heading">
+      <h3>Bildirimler</h3>
+      <button class="ghost-action compact-action" data-mark-notifications-read>Okundu</button>
+    </div>
+    <div class="sessions">
+      ${
+        items.length
+          ? items
+              .map(
+                (item) => `
+                  <button class="notification-item ${state.readNotifications.has(item.id) ? "read" : ""}" data-open-notification="${item.id}" data-notification-route="${item.route}" data-notification-tab="${item.tab}" data-notification-activity="${item.activityId}">
+                    <strong>${item.text}</strong>
+                    <span>${item.meta}</span>
+                  </button>
+                `,
+              )
+              .join("")
+          : `<div class="empty-state">Yeni bildirim yok.</div>`
+      }
+    </div>
+  `;
+  document.querySelector(".topbar")?.appendChild(menu);
 }
 
 function notify(message) {
@@ -651,6 +769,7 @@ function statusPill(status) {
     pending_payment: ["Ödeme bekliyor", "orange"],
     failed: ["Başarısız", "red"],
     refunded: ["İade edildi", "orange"],
+    answered: ["Yanıtlandı", "green"],
   };
   const [label, tone] = map[status] ?? [status, ""];
   return `<span class="status-pill ${tone}">${label}</span>`;
@@ -695,6 +814,7 @@ function renderAuth() {
         </div>
         <div class="detail-layout">
           <article class="panel">
+            ${isAdmin() ? adminProfilePanel() : ""}
             ${isParent() ? parentProfilePanel() : ""}
             ${isVendor() ? vendorProfilePanel() : ""}
           </article>
@@ -704,6 +824,7 @@ function renderAuth() {
               ${isParent() ? `<button class="ghost-action" data-route="bookings">Rezervasyonlarım</button>` : ""}
               ${isParent() ? `<button class="ghost-action" data-route="favorites">Favoriler</button>` : ""}
               ${isVendor() ? `<button class="ghost-action" data-route="vendor">Satıcı paneli</button>` : ""}
+              ${isAdmin() ? `<button class="ghost-action" data-route="admin">Admin paneli</button>` : ""}
             </div>
           </aside>
         </div>
@@ -848,6 +969,22 @@ function parentProfilePanel() {
         ${editingChild ? `<button class="ghost-action" type="button" data-cancel-child-edit>Düzenlemeyi iptal et</button>` : ""}
       </div>
     </form>
+  `;
+}
+
+function adminProfilePanel() {
+  return `
+    <h3>Admin profili</h3>
+    <div class="mini-card child-card">
+      <div class="profile-inline">
+        <span class="profile-silhouette" aria-hidden="true">${userInitials()}</span>
+        <div>
+          <strong>${state.authProfile?.full_name || "Admin"}</strong>
+          <p class="muted">${state.currentUser?.email || ADMIN_EMAIL}</p>
+        </div>
+      </div>
+      <button class="ghost-action danger-action" data-logout>Çıkış yap</button>
+    </div>
   `;
 }
 
@@ -1672,11 +1809,14 @@ function renderAdmin() {
           <p class="eyebrow">Admin panel</p>
           <h2>Onaylar, ödemeler ve komisyonlar</h2>
         </div>
-        <div class="button-row">
-          <label class="avatar-upload">
-            ${state.adminAvatar ? `<img src="${state.adminAvatar}" alt="Admin avatar" />` : `<span>${userInitials()}</span>`}
-            <input type="file" accept="image/*" data-admin-avatar />
-          </label>
+        <div class="admin-profile-card">
+          <span class="profile-silhouette" aria-hidden="true">${userInitials()}</span>
+          <div>
+            <strong>${state.authProfile?.full_name || "Admin"}</strong>
+            <p class="muted">${state.currentUser?.email || ADMIN_EMAIL}</p>
+          </div>
+          <button class="ghost-action" data-route="auth">Profili görüntüle</button>
+          <button class="ghost-action danger-action" data-logout>Çıkış yap</button>
           <span class="tag">PaymentProvider: DummyPOS</span>
         </div>
       </div>
@@ -1719,7 +1859,39 @@ function adminPanel() {
       <div class="sessions">${state.categories.map((item) => `<div class="mini-card child-card"><strong>${item}</strong><div class="button-row"><button class="ghost-action" data-edit-category="${item}">Düzenle</button><button class="ghost-action danger-action" data-delete-category="${item}">Sil</button></div></div>`).join("")}</div>
     </div>`;
   }
-  return `<div class="panel"><h3>Destek ve şikayetler</h3><div class="sessions">${state.supportTickets.length ? state.supportTickets.map((ticket) => `<div class="mini-card"><strong>${ticket.subject}</strong><p class="muted">${ticket.role} · ${ticket.email}</p><p>${ticket.message}</p>${statusPill(ticket.status)}</div>`).join("") : `<div class="empty-state">Henüz destek talebi yok.</div>`}</div></div>`;
+  return `
+    <div class="panel">
+      <h3>Gelen destek talepleri</h3>
+      <div class="sessions">
+        ${
+          state.supportTickets.length
+            ? state.supportTickets
+                .map(
+                  (ticket) => `
+                    <div class="mini-card">
+                      <div class="panel-heading">
+                        <div>
+                          <strong>${ticket.subject}</strong>
+                          <p class="muted">${ticket.role} · ${ticket.email} · ${ticket.type}</p>
+                        </div>
+                        ${statusPill(ticket.status)}
+                      </div>
+                      <p>${ticket.message}</p>
+                      ${ticket.reply ? `<div class="support-reply"><strong>Yanıt</strong><p>${ticket.reply}</p></div>` : ""}
+                      <form class="form-grid" data-support-reply-form>
+                        <input type="hidden" name="ticketId" value="${ticket.id}" />
+                        <label class="wide"><span>Yanıt</span><textarea name="reply" required placeholder="Kullanıcıya gönderilecek yanıt">${ticket.reply || ""}</textarea></label>
+                        <button class="primary-action" type="submit">Yanıtı kaydet</button>
+                      </form>
+                    </div>
+                  `,
+                )
+                .join("")
+            : `<div class="empty-state">Henüz destek talebi yok.</div>`
+        }
+      </div>
+    </div>
+  `;
 }
 
 function adminPaymentTable() {
@@ -2058,6 +2230,25 @@ document.addEventListener("click", (event) => {
   if (target.dataset.route) setRoute(target.dataset.route);
   if (target.dataset.scroll) document.querySelector(`#${target.dataset.scroll}`)?.scrollIntoView({ behavior: "smooth" });
   if (target.dataset.detail) setRoute("detail", target.dataset.detail);
+  if (target.hasAttribute("data-notifications")) {
+    state.notificationOpen = !state.notificationOpen;
+    updateNav();
+  }
+  if (target.dataset.openNotification) {
+    state.readNotifications.add(target.dataset.openNotification);
+    state.notificationOpen = false;
+    if (target.dataset.notificationTab) {
+      if (target.dataset.notificationRoute === "admin") state.adminTab = target.dataset.notificationTab;
+      if (target.dataset.notificationRoute === "vendor") state.vendorTab = target.dataset.notificationTab;
+    }
+    if (target.dataset.notificationActivity) setRoute("detail", target.dataset.notificationActivity);
+    else setRoute(target.dataset.notificationRoute || "home");
+  }
+  if (target.hasAttribute("data-mark-notifications-read")) {
+    notificationItems().forEach((item) => state.readNotifications.add(item.id));
+    state.notificationOpen = false;
+    updateNav();
+  }
   if (target.dataset.favorite) {
     toggleFavorite(target.dataset.favorite);
   }
@@ -2149,17 +2340,35 @@ document.addEventListener("submit", (event) => {
     if (name && !state.categories.includes(name)) state.categories.push(String(name));
     renderAdmin();
   }
+  if (event.target.matches("[data-support-reply-form]")) {
+    const data = new FormData(event.target);
+    const ticket = state.supportTickets.find((item) => item.id === data.get("ticketId"));
+    if (ticket) {
+      ticket.reply = String(data.get("reply") || "").trim();
+      ticket.status = "answered";
+      state.notifications.unshift({
+        id: `support-reply-${ticket.id}`,
+        text: `${ticket.subject} destek talebi yanıtlandı`,
+        meta: "Destek",
+        route: "support",
+      });
+    }
+    notify("Destek yanıtı kaydedildi.");
+    renderAdmin();
+  }
   if (event.target.id === "supportForm") {
     const data = new FormData(event.target);
     state.supportTickets.unshift({
+      id: `ticket-${Date.now()}`,
       subject: data.get("subject"),
       type: data.get("type"),
       message: data.get("message"),
       email: state.currentUser?.email,
       role: isVendor() ? "Satıcı" : isParent() ? "Ebeveyn" : "Admin",
       status: "pending",
+      reply: "",
     });
-    state.notifications.unshift({ text: "Destek talebiniz alındı.", read: false });
+    state.notifications.unshift({ id: `support-${Date.now()}`, text: "Destek talebiniz alındı.", meta: "Destek", route: "support" });
     notify("Destek talebi admin kuyruğuna gönderildi.");
     setRoute("home");
   }
@@ -2167,13 +2376,6 @@ document.addEventListener("submit", (event) => {
 
 document.addEventListener("change", (event) => {
   if (event.target.matches('input[type="file"][data-preview-target]')) previewSelectedImages(event.target);
-  if (event.target.matches('input[type="file"][data-admin-avatar]')) {
-    const file = event.target.files?.[0];
-    if (file) fileToDataUrl(file).then((url) => {
-      state.adminAvatar = url;
-      renderAdmin();
-    });
-  }
 });
 
 document.querySelector("#mobileMenu").addEventListener("click", () => {
