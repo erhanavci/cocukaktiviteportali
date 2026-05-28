@@ -714,6 +714,54 @@ input[type="range"] {
   background: #edf8f6;
 }
 
+.option-group {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.option-group legend {
+  padding: 0 6px;
+  color: #3a4850;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.check-row {
+  display: flex;
+  grid-template-columns: none;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.check-row input {
+  width: 18px;
+  min-height: 18px;
+}
+
+.booking-total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7faf9;
+}
+
+.booking-total strong {
+  color: var(--teal-dark);
+  font-size: 22px;
+}
+
 .muted {
   color: var(--muted);
 }

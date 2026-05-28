@@ -547,6 +547,10 @@ function favoriteCount(activityId) {
   return state.favoriteCounts[activityId] || 0;
 }
 
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
+}
+
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
     if (!file) {
@@ -1107,6 +1111,7 @@ function renderDetail() {
   const activity = state.activities.find((item) => item.id === state.selectedActivityId) ?? publishedActivities()[0];
   const vendor = getVendor(activity.vendorId);
   const firstAvailable = activity.sessions.find((session) => session.capacity > session.reserved);
+  const canBook = isParent() && !isVendor() && !isAdmin();
   app.innerHTML = `
     <section class="section-shell">
       <button class="ghost-action" data-route="home">← Listeye dön</button>
@@ -1153,28 +1158,47 @@ function renderDetail() {
               .map((session) => {
                 const remaining = session.capacity - session.reserved;
                 return `
-                  <label class="session-row ${session.id === firstAvailable?.id ? "selected" : ""}">
+                  <div class="session-row">
                     <span>
                       <strong>${dateTime(session.start)}</strong>
                       <span class="muted">${activity.participationType === "private" ? (remaining > 0 ? "Bire bir uygun" : "Bire bir dolu") : `${remaining} kişilik yer kaldı`} · Maks. ${session.capacity} kişi · ${money(session.price)}</span>
                     </span>
-                    <input type="radio" name="session" value="${session.id}" ${session.id === firstAvailable?.id ? "checked" : ""} ${remaining <= 0 ? "disabled" : ""} />
-                  </label>
+                    <span class="price">${money(session.price)}</span>
+                  </div>
                 `;
               })
               .join("")}
           </div>
         </article>
-        ${isVendor() || isAdmin() ? "" : `<aside class="panel">
+        ${canBook ? `<aside class="panel">
           <p class="eyebrow">Rezervasyon</p>
-          <h3>Çocuk ve ödeme bilgisi</h3>
+          <h3>Seans, çocuk ve ödeme bilgisi</h3>
           <form id="bookingForm" class="form-grid">
-            <label class="wide">
-              Katılımcı çocuk
-              <select name="child">
-                ${state.children.map((child) => `<option value="${child.id}">${child.name}, ${child.age} yaş</option>`).join("")}
-              </select>
-            </label>
+            <fieldset class="wide option-group">
+              <legend>Seans seç</legend>
+              ${activity.sessions
+                .map((session) => {
+                  const remaining = session.capacity - session.reserved;
+                  return `
+                    <label class="session-row ${session.id === firstAvailable?.id ? "selected" : ""}">
+                      <span>
+                        <strong>${dateTime(session.start)}</strong>
+                        <span class="muted">${remaining > 0 ? `${remaining} kişilik yer kaldı` : "Kontenjan dolu"} · Kişi başı ${money(session.price)}</span>
+                      </span>
+                      <input type="radio" name="session" value="${session.id}" data-session-price="${session.price}" ${session.id === firstAvailable?.id ? "checked" : ""} ${remaining <= 0 ? "disabled" : ""} />
+                    </label>
+                  `;
+                })
+                .join("")}
+            </fieldset>
+            <fieldset class="wide option-group">
+              <legend>Katılımcı çocuklar</legend>
+              ${
+                state.children.length
+                  ? state.children.map((child, index) => `<label class="check-row"><input type="checkbox" name="children" value="${child.id}" ${index === 0 ? "checked" : ""} /> <span>${child.name}, ${child.age} yaş</span></label>`).join("")
+                  : `<div class="empty-state">Rezervasyon için önce profilinizden çocuk ekleyin.</div>`
+              }
+            </fieldset>
             <label class="wide">
               Ödeme yöntemi
               <select name="paymentMethod">
@@ -1186,10 +1210,14 @@ function renderDetail() {
               Not
               <textarea name="notes" placeholder="Alerji, sağlık notu veya satıcıya iletilecek bilgi"></textarea>
             </label>
-            <button class="primary-action wide" type="submit">Rezervasyon oluştur</button>
+            <div class="booking-total wide">
+              <span>Toplam</span>
+              <strong data-booking-total>${money((firstAvailable?.price || activity.price) * Math.max(1, state.children.length ? 1 : 0))}</strong>
+            </div>
+            <button class="primary-action wide" type="submit" ${state.children.length ? "" : "disabled"}>Rezervasyon oluştur</button>
           </form>
           <p class="muted">Başarılı online ödeme confirmed rezervasyon üretir; komisyon kaydı otomatik hesaplanır.</p>
-        </aside>`}
+        </aside>` : ""}
       </div>
     </section>
   `;
@@ -1206,50 +1234,86 @@ async function createBooking(form) {
     notify("Rezervasyon akışı ebeveyn hesabı içindir.");
     return;
   }
-  const sessionId = app.querySelector('input[name="session"]:checked')?.value;
+  const sessionId = form.querySelector('input[name="session"]:checked')?.value;
   if (!sessionId) {
     notify("Uygun bir seans seçilmedi.");
     return;
   }
   const found = getSession(sessionId);
+  if (!found) {
+    notify("Seans bulunamadı. Sayfayı yenileyip tekrar deneyin.");
+    return;
+  }
   const { activity, session } = found;
+  const formData = new FormData(form);
+  const childIds = formData.getAll("children").map(String);
+  const participantCount = childIds.length;
+  if (!participantCount) {
+    notify("En az bir çocuk seçin.");
+    return;
+  }
+  const remaining = session.capacity - session.reserved;
+  if (participantCount > remaining) {
+    notify(`Bu seans için sadece ${remaining} kişilik yer kaldı.`);
+    return;
+  }
   if (session.reserved >= session.capacity) {
     notify("Bu seans için kontenjan kalmadı.");
     return;
   }
-  const formData = new FormData(form);
   const vendor = getVendor(activity.vendorId);
   const paymentMethod = formData.get("paymentMethod");
   const status = paymentMethod === "online" ? "confirmed" : "confirmed";
-  session.reserved += 1;
+  const totalAmount = session.price * participantCount;
+  session.reserved += participantCount;
   const booking = {
     id: `book-${Date.now()}`,
     activityId: activity.id,
     sessionId,
-    childId: formData.get("child"),
+    childId: childIds[0],
+    childIds,
     status,
     paymentProvider: paymentMethod === "online" ? "DummyPOS" : "Yerinde ödeme",
-    totalAmount: session.price,
+    totalAmount,
     commissionRate: vendor.commissionRate,
-    commissionAmount: Math.round(session.price * vendor.commissionRate),
+    commissionAmount: Math.round(totalAmount * vendor.commissionRate),
     createdAt: new Date().toISOString(),
     notes: formData.get("notes"),
   };
   state.bookings.unshift(booking);
 
-  if (state.supabaseReady && state.currentUser) {
-    const { error } = await state.supabaseClient.from("bookings").insert({
+  if (state.supabaseReady && state.currentUser && isUuid(sessionId)) {
+    const { data: insertedBooking, error } = await state.supabaseClient.from("bookings").insert({
       user_id: state.currentUser.id,
       session_id: sessionId,
       status: status,
-      participant_count: 1,
-      total_amount: session.price,
-    });
+      participant_count: participantCount,
+      total_amount: totalAmount,
+    }).select("id").single();
     if (error) notify(`Demo rezervasyon oluştu; Supabase kaydı için backend RPC gerekir: ${error.message}`);
+    if (insertedBooking?.id) {
+      const participants = childIds
+        .filter(isUuid)
+        .map((childId) => ({ booking_id: insertedBooking.id, child_id: childId }));
+      if (participants.length) await state.supabaseClient.from("booking_participants").insert(participants);
+    }
   }
 
   notify("Rezervasyon onaylandı, komisyon kaydı oluşturuldu.");
   setRoute("bookings");
+}
+
+function updateBookingEstimate(form = document.querySelector("#bookingForm")) {
+  if (!form) return;
+  const selectedSession = form.querySelector('input[name="session"]:checked');
+  const childCount = form.querySelectorAll('input[name="children"]:checked').length;
+  const price = Number(selectedSession?.dataset.sessionPrice || 0);
+  const total = price * childCount;
+  const totalNode = form.querySelector("[data-booking-total]");
+  if (totalNode) totalNode.textContent = money(total);
+  form.querySelectorAll(".session-row").forEach((row) => {
+    row.classList.toggle("selected", row.contains(selectedSession));
+  });
 }
 
 function renderBookings() {
@@ -1304,18 +1368,22 @@ function renderBookings() {
 
 function bookingCard(booking) {
   const { activity, session } = getSession(booking.sessionId);
-  const child = state.children.find((item) => item.id === booking.childId);
+  const childIds = booking.childIds?.length ? booking.childIds : [booking.childId].filter(Boolean);
+  const childNames = childIds
+    .map((id) => state.children.find((item) => item.id === id)?.name)
+    .filter(Boolean);
   return `
     <article class="booking-card">
       <div class="panel-heading">
         <div>
           <h3>${activity.title}</h3>
-          <p class="muted">${dateTime(session.start)} · ${child?.name ?? "Çocuk profili"}</p>
+          <p class="muted">${dateTime(session.start)} · ${childNames.join(", ") || `${childIds.length || 1} katılımcı`}</p>
         </div>
         ${statusPill(booking.status)}
       </div>
       <div class="tag-row">
         <span class="tag">Ödeme: ${booking.paymentProvider}</span>
+        <span class="tag">Katılımcı: ${childIds.length || 1}</span>
         <span class="tag">Tutar: ${money(booking.totalAmount)}</span>
         <span class="tag">Komisyon: ${money(booking.commissionAmount)}</span>
       </div>
@@ -2012,7 +2080,7 @@ async function handleLogin(form) {
       full_name: email,
     };
     notify("Demo modda giriş yapıldı. Supabase ayarları girilince gerçek oturum açılır.");
-    setRoute(email === ADMIN_EMAIL ? "admin" : "auth");
+    setRoute(email === ADMIN_EMAIL ? "admin" : "home");
     return;
   }
 
@@ -2023,7 +2091,7 @@ async function handleLogin(form) {
   }
   await setSupabaseUser(authData.user);
   notify("Giriş başarılı.");
-  setRoute(isAdmin() ? "admin" : "auth");
+  setRoute(isAdmin() ? "admin" : "home");
 }
 
 async function handleSignup(form) {
@@ -2106,15 +2174,18 @@ async function handleSignup(form) {
 }
 
 async function handleLogout() {
-  if (state.supabaseReady) await state.supabaseClient.auth.signOut();
+  const client = state.supabaseReady ? state.supabaseClient : null;
   state.currentUser = null;
   state.authProfile = null;
   state.vendorIds = [];
+  state.favorites = new Set();
+  state.readNotifications = new Set();
+  state.notificationOpen = false;
   state.authMode = "choice";
   state.editingChildId = null;
   notify("Çıkış yapıldı.");
   setRoute("home");
-  render();
+  if (client) await client.auth.signOut();
 }
 
 async function handleChildCreate(form) {
@@ -2208,8 +2279,12 @@ async function toggleFavorite(activityId) {
   if (!state.supabaseReady) return;
 
   const { error } = wasFavorite
-    ? await state.supabaseClient.from("favorites").delete().eq("user_id", state.currentUser.id).eq("activity_id", activityId)
-    : await state.supabaseClient.from("favorites").upsert({ user_id: state.currentUser.id, activity_id: activityId });
+    ? isUuid(activityId)
+      ? await state.supabaseClient.from("favorites").delete().eq("user_id", state.currentUser.id).eq("activity_id", activityId)
+      : { error: null }
+    : isUuid(activityId)
+      ? await state.supabaseClient.from("favorites").upsert({ user_id: state.currentUser.id, activity_id: activityId })
+      : { error: null };
 
   if (error) {
     wasFavorite ? state.favorites.add(activityId) : state.favorites.delete(activityId);
@@ -2219,7 +2294,7 @@ async function toggleFavorite(activityId) {
     return;
   }
 
-  await loadFavoriteData();
+  if (isUuid(activityId)) await loadFavoriteData();
   render();
 }
 
@@ -2376,6 +2451,9 @@ document.addEventListener("submit", (event) => {
 
 document.addEventListener("change", (event) => {
   if (event.target.matches('input[type="file"][data-preview-target]')) previewSelectedImages(event.target);
+  if (event.target.matches('#bookingForm input[name="session"], #bookingForm input[name="children"]')) {
+    updateBookingEstimate(event.target.closest("form"));
+  }
 });
 
 document.querySelector("#mobileMenu").addEventListener("click", () => {
