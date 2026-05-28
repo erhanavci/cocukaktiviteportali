@@ -224,6 +224,9 @@ language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  new_vendor_id uuid;
+  vendor_display_name text;
 begin
   insert into public.profiles (id, email, full_name, role, status)
   values (
@@ -243,6 +246,31 @@ begin
     role = excluded.role,
     status = excluded.status;
 
+  if new.raw_user_meta_data ->> 'role' = 'vendor' and new.email <> 'esinaykanat@gmail.com' then
+    vendor_display_name := coalesce(
+      nullif(new.raw_user_meta_data ->> 'vendor_name', ''),
+      nullif(new.raw_user_meta_data ->> 'full_name', ''),
+      split_part(new.email, '@', 1)
+    );
+
+    insert into public.vendors (name, slug, status, city, district, commission_rate, plan_code)
+    values (
+      vendor_display_name,
+      lower(regexp_replace(vendor_display_name, '[^a-zA-Z0-9]+', '-', 'g')) || '-' || substr(new.id::text, 1, 8),
+      'pending',
+      'İstanbul',
+      'Belirlenecek',
+      0.12,
+      'FREE'
+    )
+    on conflict (slug) do update set name = excluded.name
+    returning id into new_vendor_id;
+
+    insert into public.vendor_users (vendor_id, user_id, role)
+    values (new_vendor_id, new.id, 'owner')
+    on conflict (vendor_id, user_id) do nothing;
+  end if;
+
   return new;
 end;
 $$;
@@ -251,6 +279,30 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
 after insert on auth.users
 for each row execute function public.handle_new_user();
+
+insert into public.vendors (name, slug, status, city, district, commission_rate, plan_code)
+select
+  coalesce(nullif(p.full_name, ''), split_part(p.email, '@', 1)),
+  lower(regexp_replace(coalesce(nullif(p.full_name, ''), split_part(p.email, '@', 1)), '[^a-zA-Z0-9]+', '-', 'g')) || '-' || substr(p.id::text, 1, 8),
+  'pending',
+  'İstanbul',
+  'Belirlenecek',
+  0.12,
+  'FREE'
+from public.profiles p
+where p.role = 'vendor'
+  and not exists (select 1 from public.vendor_users vu where vu.user_id = p.id)
+on conflict (slug) do nothing;
+
+insert into public.vendor_users (vendor_id, user_id, role)
+select
+  v.id,
+  p.id,
+  'owner'
+from public.profiles p
+join public.vendors v on v.slug = lower(regexp_replace(coalesce(nullif(p.full_name, ''), split_part(p.email, '@', 1)), '[^a-zA-Z0-9]+', '-', 'g')) || '-' || substr(p.id::text, 1, 8)
+where p.role = 'vendor'
+on conflict (vendor_id, user_id) do nothing;
 
 alter table public.profiles enable row level security;
 alter table public.children enable row level security;

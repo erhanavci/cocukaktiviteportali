@@ -2177,6 +2177,8 @@ async function handleLogin(form) {
   const data = new FormData(form);
   const email = String(data.get("email")).trim().toLowerCase();
   const password = String(data.get("password"));
+  const submitButton = form.querySelector('button[type="submit"]');
+  if (submitButton) submitButton.disabled = true;
 
   if (!state.supabaseReady) {
     state.currentUser = { id: `demo-${Date.now()}`, email };
@@ -2192,14 +2194,23 @@ async function handleLogin(form) {
   }
 
   const { data: authData, error } = await state.supabaseClient.auth.signInWithPassword({ email, password });
+  if (submitButton) submitButton.disabled = false;
   if (error) {
     notify(formatSupabaseError(error));
     return;
   }
-  await setSupabaseUser(authData.user);
-  await loadMarketplaceData();
+  state.currentUser = authData.user;
+  state.authProfile = {
+    id: authData.user.id,
+    email: authData.user.email,
+    role: authData.user.email === ADMIN_EMAIL ? "admin" : authData.user.user_metadata?.role ?? "parent",
+    full_name: authData.user.user_metadata?.full_name ?? authData.user.email,
+  };
   notify("Giriş başarılı.");
   setRoute("home");
+  await setSupabaseUser(authData.user);
+  await loadMarketplaceData();
+  render();
 }
 
 async function handleSignup(form) {
@@ -2210,6 +2221,8 @@ async function handleSignup(form) {
   const requestedRole = String(data.get("role"));
   const role = email === ADMIN_EMAIL ? "admin" : requestedRole;
   const vendorName = String(data.get("vendorName") || "").trim();
+  const submitButton = form.querySelector('button[type="submit"]');
+  if (submitButton) submitButton.disabled = true;
 
   if (!state.supabaseReady) {
     state.currentUser = { id: `demo-${Date.now()}`, email };
@@ -2235,6 +2248,7 @@ async function handleSignup(form) {
     password,
     options: { data: { full_name: fullName, role, vendor_name: vendorName } },
   });
+  if (submitButton) submitButton.disabled = false;
   if (error) {
     notify(formatSupabaseError(error));
     return;
@@ -2242,9 +2256,16 @@ async function handleSignup(form) {
 
   const user = authData.user;
   if (user && !authData.session) {
-    notify(role === "vendor" ? "Firma üyeliği oluşturuldu. E-postayı doğrulayıp giriş yapınca admin onayına düşecek." : "Üyelik oluşturuldu. E-posta doğrulama için gelen kutusunu kontrol edin.");
+    notify(role === "vendor" ? "Firma üyeliği oluşturuldu. Admin onayına gönderildi; e-postayı doğrulayın." : "Üyelik oluşturuldu. E-posta doğrulama için gelen kutusunu kontrol edin.");
     setRoute("home");
     return;
+  }
+
+  if (user) {
+    state.currentUser = user;
+    state.authProfile = { id: user.id, email, role, full_name: fullName };
+    notify(role === "vendor" ? "Firma kaydı oluşturuldu. Admin onayı bekliyor." : "Üyelik oluşturuldu.");
+    setRoute("home");
   }
 
   if (user) {
@@ -2256,36 +2277,11 @@ async function handleSignup(form) {
       status: role === "vendor" ? "pending" : "active",
     });
 
-    if (role === "vendor") {
-      const { data: vendor } = await state.supabaseClient
-        .from("vendors")
-        .insert({
-          name: vendorName || fullName,
-          slug: `${(vendorName || fullName).toLocaleLowerCase("tr-TR").replaceAll(" ", "-")}-${Date.now()}`,
-          status: "pending",
-          city: "İstanbul",
-          district: "Belirlenecek",
-          commission_rate: 0.12,
-          plan_code: "FREE",
-        })
-        .select()
-        .single();
-
-      if (vendor) {
-        await state.supabaseClient.from("vendor_users").insert({
-          vendor_id: vendor.id,
-          user_id: user.id,
-          role: "owner",
-        });
-        state.vendorIds = [vendor.id];
-      }
-    }
   }
 
   await setSupabaseUser(user);
   await loadMarketplaceData();
-  notify(role === "vendor" ? "Firma kaydı oluşturuldu. Admin onayı bekliyor." : "Üyelik oluşturuldu. E-posta doğrulama açıksa gelen kutusunu kontrol edin.");
-  setRoute("home");
+  render();
 }
 
 async function handleLogout() {
