@@ -166,6 +166,20 @@ create table if not exists public.favorites (
   primary key (user_id, activity_id)
 );
 
+create table if not exists public.support_tickets (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  email text not null,
+  role text not null,
+  type text not null default 'Destek',
+  subject text not null,
+  message text not null,
+  status text not null default 'pending' check (status in ('pending', 'answered')),
+  reply text,
+  created_at timestamptz not null default now(),
+  answered_at timestamptz
+);
+
 create table if not exists public.subscription_plans (
   code text primary key,
   name text not null,
@@ -250,6 +264,7 @@ alter table public.booking_participants enable row level security;
 alter table public.payments enable row level security;
 alter table public.commissions enable row level security;
 alter table public.favorites enable row level security;
+alter table public.support_tickets enable row level security;
 alter table public.subscription_plans enable row level security;
 
 drop policy if exists "profiles self or admin" on public.profiles;
@@ -374,6 +389,19 @@ for select using (public.is_admin() or exists (
   join public.vendor_users vu on vu.vendor_id = a.vendor_id
   where a.id = favorites.activity_id and vu.user_id = auth.uid()
 ));
+
+drop policy if exists "support tickets owner admin read" on public.support_tickets;
+create policy "support tickets owner admin read" on public.support_tickets
+for select using (user_id = auth.uid() or public.is_admin());
+
+drop policy if exists "support tickets owner create" on public.support_tickets;
+create policy "support tickets owner create" on public.support_tickets
+for insert with check (user_id = auth.uid());
+
+drop policy if exists "support tickets admin answer" on public.support_tickets;
+create policy "support tickets admin answer" on public.support_tickets
+for update using (public.is_admin())
+with check (public.is_admin());
 
 drop policy if exists "admin payments" on public.payments;
 create policy "admin payments" on public.payments

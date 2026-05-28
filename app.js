@@ -270,6 +270,35 @@ async function setSupabaseUser(user) {
   if (state.authProfile.role === "vendor" || user.email === ADMIN_EMAIL) {
     const { data: vendorLinks } = await state.supabaseClient.from("vendor_users").select("vendor_id").eq("user_id", user.id);
     state.vendorIds = vendorLinks?.map((link) => link.vendor_id) ?? [];
+    if (state.authProfile.role === "vendor" && !state.vendorIds.length) {
+      await ensureVendorProfile(user);
+    }
+  }
+}
+
+async function ensureVendorProfile(user) {
+  const vendorName = user.user_metadata?.vendor_name || user.user_metadata?.full_name || user.email;
+  const { data: vendor, error } = await state.supabaseClient
+    .from("vendors")
+    .insert({
+      name: vendorName,
+      slug: `${String(vendorName).toLocaleLowerCase("tr-TR").replaceAll(" ", "-")}-${Date.now()}`,
+      status: "pending",
+      city: "İstanbul",
+      district: "Belirlenecek",
+      commission_rate: 0.12,
+      plan_code: "FREE",
+    })
+    .select("id")
+    .single();
+
+  if (!error && vendor?.id) {
+    await state.supabaseClient.from("vendor_users").insert({
+      vendor_id: vendor.id,
+      user_id: user.id,
+      role: "owner",
+    });
+    state.vendorIds = [vendor.id];
   }
 }
 
@@ -399,7 +428,7 @@ async function loadMarketplaceData() {
     .select("*")
     .order("created_at", { ascending: false });
 
-  if (vendors?.length) {
+  if (vendors) {
     state.vendors = vendors.map((vendor) => ({
       id: vendor.id,
       name: vendor.name,
@@ -416,7 +445,7 @@ async function loadMarketplaceData() {
     .select("*, category:categories(name), sessions:activity_sessions(*)")
     .order("created_at", { ascending: false });
 
-  if (activities?.length) {
+  if (activities) {
     state.activities = activities.map((activity, index) => ({
       id: activity.id,
       vendorId: activity.vendor_id,
@@ -453,6 +482,31 @@ async function loadMarketplaceData() {
 
   await loadFavoriteData();
   await loadBookingData();
+  await loadSupportTickets();
+}
+
+async function loadSupportTickets() {
+  if (!state.supabaseReady || !state.currentUser) return;
+
+  const { data, error } = await state.supabaseClient
+    .from("support_tickets")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error || !data) return;
+
+  state.supportTickets = data.map((ticket) => ({
+    id: ticket.id,
+    subject: ticket.subject,
+    type: ticket.type,
+    message: ticket.message,
+    email: ticket.email,
+    role: ticket.role,
+    status: ticket.status,
+    reply: ticket.reply || "",
+    userId: ticket.user_id,
+    createdAt: ticket.created_at,
+  }));
+  saveSupportTickets();
 }
 
 async function loadFavoriteData() {
@@ -1080,8 +1134,8 @@ function setupFilters() {
 
   app.querySelector("#resetFilters").addEventListener("click", () => {
     form.reset();
-    form.elements.maxPrice.value = 2500;
-    app.querySelector("#maxPriceLabel").textContent = money(2500);
+    form.elements.maxPrice.value = 10000;
+    app.querySelector("#maxPriceLabel").textContent = money(10000);
     renderActivityGrid(publishedActivities());
   });
 }
@@ -1435,7 +1489,6 @@ function bookingCard(booking) {
         <span class="tag">Ödeme: ${booking.paymentProvider}</span>
         <span class="tag">Katılımcı: ${childIds.length || 1}</span>
         <span class="tag">Tutar: ${money(booking.totalAmount)}</span>
-        <span class="tag">Komisyon: ${money(booking.commissionAmount)}</span>
       </div>
     </article>
   `;
@@ -1954,8 +2007,8 @@ function adminTabLabel(tab) {
 
 function adminPanel() {
   if (state.adminTab === "approvals") {
-    const pendingVendors = state.vendors.filter((vendor) => vendor.status === "pending");
-    const pendingActivities = state.activities.filter((activity) => activity.status === "pending");
+    const pendingVendors = state.vendors.filter((vendor) => vendor.status === "pending" && (!state.supabaseReady || isUuid(vendor.id)));
+    const pendingActivities = state.activities.filter((activity) => activity.status === "pending" && (!state.supabaseReady || isUuid(activity.id)));
     return `
       <div class="panel">
         <h3>Onay bekleyen firmalar</h3>
@@ -2134,7 +2187,7 @@ async function handleLogin(form) {
       full_name: email,
     };
     notify("Demo modda giriş yapıldı. Supabase ayarları girilince gerçek oturum açılır.");
-    setRoute(email === ADMIN_EMAIL ? "admin" : "home");
+    setRoute("home");
     return;
   }
 
@@ -2144,8 +2197,9 @@ async function handleLogin(form) {
     return;
   }
   await setSupabaseUser(authData.user);
+  await loadMarketplaceData();
   notify("Giriş başarılı.");
-  setRoute(isAdmin() ? "admin" : "home");
+  setRoute("home");
 }
 
 async function handleSignup(form) {
@@ -2172,14 +2226,14 @@ async function handleSignup(form) {
       });
     }
     notify("Demo üyelik oluşturuldu. Supabase ayarı girilince kayıt veritabanına yazılır.");
-    setRoute(role === "vendor" ? "vendor" : "auth");
+    setRoute("home");
     return;
   }
 
   const { data: authData, error } = await state.supabaseClient.auth.signUp({
     email,
     password,
-    options: { data: { full_name: fullName, role } },
+    options: { data: { full_name: fullName, role, vendor_name: vendorName } },
   });
   if (error) {
     notify(formatSupabaseError(error));
@@ -2187,6 +2241,12 @@ async function handleSignup(form) {
   }
 
   const user = authData.user;
+  if (user && !authData.session) {
+    notify(role === "vendor" ? "Firma üyeliği oluşturuldu. E-postayı doğrulayıp giriş yapınca admin onayına düşecek." : "Üyelik oluşturuldu. E-posta doğrulama için gelen kutusunu kontrol edin.");
+    setRoute("home");
+    return;
+  }
+
   if (user) {
     await state.supabaseClient.from("profiles").upsert({
       id: user.id,
@@ -2223,8 +2283,9 @@ async function handleSignup(form) {
   }
 
   await setSupabaseUser(user);
-  notify("Üyelik oluşturuldu. E-posta doğrulama açıksa gelen kutusunu kontrol edin.");
-  setRoute(role === "vendor" ? "vendor" : "auth");
+  await loadMarketplaceData();
+  notify(role === "vendor" ? "Firma kaydı oluşturuldu. Admin onayı bekliyor." : "Üyelik oluşturuldu. E-posta doğrulama açıksa gelen kutusunu kontrol edin.");
+  setRoute("home");
 }
 
 async function handleLogout() {
@@ -2457,7 +2518,7 @@ document.addEventListener("click", (event) => {
   }
 });
 
-document.addEventListener("submit", (event) => {
+document.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (event.target.id === "bookingForm") createBooking(event.target);
   if (event.target.id === "activityForm") createActivity(event.target);
@@ -2475,6 +2536,12 @@ document.addEventListener("submit", (event) => {
     if (ticket) {
       ticket.reply = String(data.get("reply") || "").trim();
       ticket.status = "answered";
+      if (state.supabaseReady && isUuid(ticket.id)) {
+        await state.supabaseClient
+          .from("support_tickets")
+          .update({ reply: ticket.reply, status: "answered", answered_at: new Date().toISOString() })
+          .eq("id", ticket.id);
+      }
       saveSupportTickets();
       state.notifications.unshift({
         id: `support-reply-${ticket.id}`,
@@ -2488,7 +2555,7 @@ document.addEventListener("submit", (event) => {
   }
   if (event.target.id === "supportForm") {
     const data = new FormData(event.target);
-    state.supportTickets.unshift({
+    const ticket = {
       id: `ticket-${Date.now()}`,
       subject: data.get("subject"),
       type: data.get("type"),
@@ -2497,7 +2564,43 @@ document.addEventListener("submit", (event) => {
       role: isVendor() ? "Satıcı" : isParent() ? "Ebeveyn" : "Admin",
       status: "pending",
       reply: "",
-    });
+      userId: state.currentUser?.id,
+    };
+    state.supportTickets.unshift(ticket);
+    if (state.supabaseReady && state.currentUser) {
+      const { data: insertedTicket, error } = await state.supabaseClient
+        .from("support_tickets")
+        .insert({
+          user_id: state.currentUser.id,
+          email: state.currentUser.email,
+          role: ticket.role,
+          type: ticket.type,
+          subject: ticket.subject,
+          message: ticket.message,
+          status: "pending",
+        })
+        .select("*")
+        .single();
+      if (insertedTicket && !error) {
+        state.supportTickets = state.supportTickets.map((item) =>
+          item.id === ticket.id
+            ? {
+                id: insertedTicket.id,
+                subject: insertedTicket.subject,
+                type: insertedTicket.type,
+                message: insertedTicket.message,
+                email: insertedTicket.email,
+                role: insertedTicket.role,
+                status: insertedTicket.status,
+                reply: insertedTicket.reply || "",
+                userId: insertedTicket.user_id,
+                createdAt: insertedTicket.created_at,
+              }
+            : item,
+        );
+      }
+      if (error) notify(`Destek talebi yerelde kaydedildi; Supabase kaydı başarısız: ${error.message}`);
+    }
     saveSupportTickets();
     state.notifications.unshift({ id: `support-${Date.now()}`, text: "Destek talebiniz alındı.", meta: "Destek", route: "support" });
     notify("Destek talebi admin kuyruğuna gönderildi.");
