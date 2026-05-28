@@ -9,6 +9,7 @@ const state = {
   authProfile: null,
   supabaseClient: null,
   supabaseReady: false,
+  supabaseConfigError: "",
   favorites: new Set(["act-art-1"]),
   bookings: [],
   vendors: [
@@ -133,6 +134,24 @@ const state = {
 const app = document.querySelector("#app");
 const toast = document.querySelector("#toast");
 
+function normalizeSupabaseConfig(config) {
+  const url = String(config?.url || "").trim().replace(/\/+$/, "");
+  const anonKey = String(config?.anonKey || "").trim();
+
+  if (!url || !anonKey || url.includes("YOUR_SUPABASE") || anonKey.includes("YOUR_SUPABASE")) {
+    return { ready: false, error: "" };
+  }
+
+  if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(url)) {
+    return {
+      ready: false,
+      error: "SUPABASE_URL sadece https://PROJECT_ID.supabase.co formatında olmalı. /auth/v1, /rest/v1 veya dashboard linki eklemeyin.",
+    };
+  }
+
+  return { ready: true, url, anonKey, error: "" };
+}
+
 async function initSupabase() {
   let config = window.SUPABASE_CONFIG;
 
@@ -145,18 +164,15 @@ async function initSupabase() {
     }
   }
 
-  const hasConfig =
-    config?.url &&
-    config?.anonKey &&
-    !String(config.url).includes("YOUR_SUPABASE") &&
-    !String(config.anonKey).includes("YOUR_SUPABASE");
+  const normalizedConfig = normalizeSupabaseConfig(config);
+  state.supabaseConfigError = normalizedConfig.error;
 
-  if (!hasConfig || !window.supabase?.createClient) {
+  if (!normalizedConfig.ready || !window.supabase?.createClient) {
     state.supabaseReady = false;
     return;
   }
 
-  state.supabaseClient = window.supabase.createClient(config.url, config.anonKey);
+  state.supabaseClient = window.supabase.createClient(normalizedConfig.url, normalizedConfig.anonKey);
   state.supabaseReady = true;
 
   const { data } = await state.supabaseClient.auth.getSession();
@@ -420,6 +436,7 @@ function renderAuth() {
           <p class="eyebrow">Üyelik sistemi</p>
           <h2>Ebeveyn ve satıcı hesapları ayrı ilerler</h2>
           <p class="muted">${modeLabel}. Supabase ayarı girildiğinde kayıt/giriş gerçek auth üzerinden yapılır.</p>
+          ${state.supabaseConfigError ? `<p class="status-pill red">${state.supabaseConfigError}</p>` : ""}
         </div>
       </div>
       <div class="detail-layout">
@@ -1140,6 +1157,14 @@ function priceCard(name, price, status, features, active) {
   `;
 }
 
+function formatSupabaseError(error) {
+  const message = error?.message || String(error);
+  if (message.includes("Invalid path specified in request URL")) {
+    return "Supabase URL yanlış görünüyor. Vercel SUPABASE_URL değeri sadece https://PROJECT_ID.supabase.co olmalı.";
+  }
+  return message;
+}
+
 async function handleLogin(form) {
   const data = new FormData(form);
   const email = String(data.get("email")).trim().toLowerCase();
@@ -1160,7 +1185,7 @@ async function handleLogin(form) {
 
   const { data: authData, error } = await state.supabaseClient.auth.signInWithPassword({ email, password });
   if (error) {
-    notify(error.message);
+    notify(formatSupabaseError(error));
     return;
   }
   await setSupabaseUser(authData.user);
@@ -1202,7 +1227,7 @@ async function handleSignup(form) {
     options: { data: { full_name: fullName, role } },
   });
   if (error) {
-    notify(error.message);
+    notify(formatSupabaseError(error));
     return;
   }
 
