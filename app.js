@@ -174,6 +174,16 @@ const state = {
 const app = document.querySelector("#app");
 const toast = document.querySelector("#toast");
 
+try {
+  state.supportTickets = JSON.parse(localStorage.getItem("supportTickets") || "[]");
+} catch {
+  state.supportTickets = [];
+}
+
+function saveSupportTickets() {
+  localStorage.setItem("supportTickets", JSON.stringify(state.supportTickets));
+}
+
 function normalizeSupabaseConfig(config) {
   const url = String(config?.url || "").trim().replace(/\/+$/, "");
   const anonKey = String(config?.anonKey || "").trim();
@@ -681,17 +691,51 @@ function renderSupport() {
     renderAdmin();
     return;
   }
+  const tickets = state.supportTickets.filter((ticket) => ticket.email === state.currentUser.email);
   app.innerHTML = `
     <section class="section-shell">
-      <div class="panel auth-panel">
-        <p class="eyebrow">Destek</p>
-        <h2>Destek talebi oluştur</h2>
-        <form id="supportForm" class="form-grid">
-          <label><span>Konu</span><input name="subject" required placeholder="Rezervasyon / etkinlik / ödeme" /></label>
-          <label><span>Tip</span><select name="type"><option>Destek</option><option>Şikayet</option><option>İade</option></select></label>
-          <label class="wide"><span>Mesaj</span><textarea name="message" required></textarea></label>
-          <button class="primary-action wide" type="submit">Talep gönder</button>
-        </form>
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Destek</p>
+          <h2>Destek taleplerim</h2>
+        </div>
+      </div>
+      <div class="detail-layout">
+        <article class="panel">
+          <h3>Gönderdiğim talepler</h3>
+          <div class="sessions">
+            ${
+              tickets.length
+                ? tickets
+                    .map(
+                      (ticket) => `
+                        <div class="mini-card">
+                          <div class="panel-heading">
+                            <div>
+                              <strong>${ticket.subject}</strong>
+                              <p class="muted">${ticket.type}</p>
+                            </div>
+                            ${supportStatusPill(ticket.status)}
+                          </div>
+                          <p>${ticket.message}</p>
+                          ${ticket.reply ? `<div class="support-reply"><strong>Yanıt</strong><p>${ticket.reply}</p></div>` : `<p class="muted">Henüz yanıtlanmadı.</p>`}
+                        </div>
+                      `,
+                    )
+                    .join("")
+                : `<div class="empty-state">Henüz destek talebi göndermediniz.</div>`
+            }
+          </div>
+        </article>
+        <aside class="panel">
+          <h3>Yeni destek talebi</h3>
+          <form id="supportForm" class="form-grid">
+            <label><span>Konu</span><input name="subject" required placeholder="Rezervasyon / etkinlik / ödeme" /></label>
+            <label><span>Tip</span><select name="type"><option>Destek</option><option>Şikayet</option><option>İade</option></select></label>
+            <label class="wide"><span>Mesaj</span><textarea name="message" required></textarea></label>
+            <button class="primary-action wide" type="submit">Talep gönder</button>
+          </form>
+        </aside>
       </div>
     </section>
   `;
@@ -703,9 +747,11 @@ function updateNav() {
   const bookingsButton = document.querySelector('[data-route="bookings"]');
   const vendorButton = document.querySelector('[data-route="vendor"]');
   const supportButton = document.querySelector('[data-route="support"]');
+  const pricingButton = document.querySelector('[data-route="pricing"]');
   if (bookingsButton) bookingsButton.hidden = !isParent();
   if (vendorButton) vendorButton.hidden = !isVendor();
   if (supportButton) supportButton.hidden = isAdmin();
+  if (pricingButton) pricingButton.hidden = !isVendor();
   if (notificationButton) {
     notificationButton.hidden = !state.currentUser;
     notificationButton.innerHTML = `<span aria-hidden="true">🔔</span>${unreadCount() ? `<b>${unreadCount()}</b>` : ""}`;
@@ -777,6 +823,10 @@ function statusPill(status) {
   };
   const [label, tone] = map[status] ?? [status, ""];
   return `<span class="status-pill ${tone}">${label}</span>`;
+}
+
+function supportStatusPill(status) {
+  return status === "answered" ? `<span class="status-pill green">Cevaplandı</span>` : `<span class="status-pill orange">Cevaplanmadı</span>`;
 }
 
 function render() {
@@ -1942,7 +1992,7 @@ function adminPanel() {
                           <strong>${ticket.subject}</strong>
                           <p class="muted">${ticket.role} · ${ticket.email} · ${ticket.type}</p>
                         </div>
-                        ${statusPill(ticket.status)}
+                        ${supportStatusPill(ticket.status)}
                       </div>
                       <p>${ticket.message}</p>
                       ${ticket.reply ? `<div class="support-reply"><strong>Yanıt</strong><p>${ticket.reply}</p></div>` : ""}
@@ -2004,6 +2054,10 @@ function adminCommissionTable() {
 }
 
 function renderPricing() {
+  if (!isVendor()) {
+    renderAccessGate("Satıcı hesabı gerekli", "Planlar sadece firma hesaplarında görüntülenir.", "Giriş yap");
+    return;
+  }
   app.innerHTML = `
     <section class="section-shell">
       <div class="section-heading">
@@ -2421,6 +2475,7 @@ document.addEventListener("submit", (event) => {
     if (ticket) {
       ticket.reply = String(data.get("reply") || "").trim();
       ticket.status = "answered";
+      saveSupportTickets();
       state.notifications.unshift({
         id: `support-reply-${ticket.id}`,
         text: `${ticket.subject} destek talebi yanıtlandı`,
@@ -2443,9 +2498,10 @@ document.addEventListener("submit", (event) => {
       status: "pending",
       reply: "",
     });
+    saveSupportTickets();
     state.notifications.unshift({ id: `support-${Date.now()}`, text: "Destek talebiniz alındı.", meta: "Destek", route: "support" });
     notify("Destek talebi admin kuyruğuna gönderildi.");
-    setRoute("home");
+    renderSupport();
   }
 });
 
