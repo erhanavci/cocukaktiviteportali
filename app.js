@@ -57,12 +57,14 @@ const state = {
       maxAge: 9,
       district: "Kadıköy",
       address: "Caferağa Mahallesi, Moda Caddesi No:12",
+      locationQuery: "Minik Renkler Atölyesi Kadıköy",
       lat: 40.9875,
       lng: 29.0273,
       price: 650,
       status: "approved",
       visual: "linear-gradient(135deg, #0f766e, #e85d45 55%, #d99b22)",
       imageUrl: "",
+      galleryImages: [],
       description:
         "Çocuklar kendi seramik kaselerini tasarlar, renk karışımlarını öğrenir ve güvenli atölye ekipmanlarıyla çalışır.",
       cancellation: "Etkinlikten 24 saat öncesine kadar ücretsiz iptal.",
@@ -83,12 +85,14 @@ const state = {
       maxAge: 12,
       district: "Beşiktaş",
       address: "Levent Mahallesi, Çocuk Bilim Merkezi",
+      locationQuery: "Bilim Kutusu Levent İstanbul",
       lat: 41.0812,
       lng: 29.0111,
       price: 900,
       status: "approved",
       visual: "linear-gradient(135deg, #2563eb, #0f766e 52%, #f5c451)",
       imageUrl: "",
+      galleryImages: [],
       description:
         "Algoritma mantığı, sensörler ve takım çalışmasıyla çocukların problem çözme kaslarını güçlendiren uygulamalı program.",
       cancellation: "İlk ders başlamadan 24 saat öncesine kadar ücretsiz iptal.",
@@ -109,12 +113,14 @@ const state = {
       maxAge: 3,
       district: "Kadıköy",
       address: "Göztepe Parkı yanı oyun alanı",
+      locationQuery: "Göztepe Parkı Kadıköy",
       lat: 40.9761,
       lng: 29.0588,
       price: 420,
       status: "approved",
       visual: "linear-gradient(135deg, #f97316, #0ea5e9 55%, #84cc16)",
       imageUrl: "",
+      galleryImages: [],
       description:
         "Duyusal oyun, ritim ve güvenli serbest hareket alanıyla 0-3 yaş dönemine uygun ebeveynli buluşma.",
       cancellation: "Etkinlikten 24 saat öncesine kadar ücretsiz iptal.",
@@ -134,12 +140,14 @@ const state = {
       maxAge: 10,
       district: "Beyoğlu",
       address: "Meşrutiyet Caddesi, Beyoğlu",
+      locationQuery: "Pera Müzesi Beyoğlu",
       lat: 41.0316,
       lng: 28.9744,
       price: 780,
       status: "pending",
       visual: "linear-gradient(135deg, #7c3aed, #e85d45 58%, #facc15)",
       imageUrl: "",
+      galleryImages: [],
       description:
         "Müze anlatımı, eskiz defteri ve mini yaratıcı görevlerle çocuklara sanat tarihini deneyimleten gezi.",
       cancellation: "Satıcı ve admin onaylı iptal/iade süreci uygulanır.",
@@ -306,12 +314,14 @@ async function loadMarketplaceData() {
       maxAge: activity.max_age,
       district: activity.district,
       address: activity.address ?? activity.location_address ?? "",
+      locationQuery: activity.location_query ?? activity.address ?? "",
       lat: activity.lat == null ? null : Number(activity.lat),
       lng: activity.lng == null ? null : Number(activity.lng),
       price: Number(activity.sessions?.[0]?.price ?? 0),
       status: activity.status,
       visual: visualForIndex(index),
       imageUrl: activity.image_url ?? "",
+      galleryImages: activity.gallery_image_urls ?? [],
       description: activity.description,
       cancellation: activity.cancellation_policy,
       parentParticipation: "Satıcı bilgisinde belirtilecek.",
@@ -362,13 +372,13 @@ function localDateTimeFromDuration(date, startTime, minutes) {
 }
 
 function mapEmbedUrl(activity) {
-  const lat = Number(activity.lat);
-  const lng = Number(activity.lng);
-  if (Number.isFinite(lat) && Number.isFinite(lng)) {
-    const delta = 0.006;
-    return `https://www.openstreetmap.org/export/embed.html?bbox=${lng - delta}%2C${lat - delta}%2C${lng + delta}%2C${lat + delta}&layer=mapnik&marker=${lat}%2C${lng}`;
-  }
-  return `https://www.openstreetmap.org/export/embed.html?bbox=28.80%2C40.85%2C29.20%2C41.15&layer=mapnik`;
+  const query = encodeURIComponent(activity.locationQuery || activity.address || `${activity.title} ${activity.district} İstanbul`);
+  return `https://maps.google.com/maps?q=${query}&output=embed`;
+}
+
+function googleMapsSearchUrl(activity) {
+  const query = encodeURIComponent(activity.locationQuery || activity.address || `${activity.title} ${activity.district} İstanbul`);
+  return `https://www.google.com/maps/search/?api=1&query=${query}`;
 }
 
 function remainingLabel(activity) {
@@ -405,6 +415,15 @@ async function uploadActivityImage(file, vendorId) {
 
   const { data } = state.supabaseClient.storage.from("activity-images").getPublicUrl(path);
   return data.publicUrl;
+}
+
+async function uploadActivityImages(files, vendorId) {
+  const list = Array.from(files || []);
+  const urls = [];
+  for (const file of list) {
+    urls.push(await uploadActivityImage(file, vendorId));
+  }
+  return urls;
 }
 
 function getVendor(id) {
@@ -821,6 +840,17 @@ function renderDetail() {
           <div class="map-frame">
             <iframe title="${activity.title} konumu" src="${mapEmbedUrl(activity)}" loading="lazy"></iframe>
           </div>
+          <a class="ghost-action map-link" href="${googleMapsSearchUrl(activity)}" target="_blank" rel="noreferrer">Google Maps'te aç</a>
+          ${
+            activity.galleryImages?.length
+              ? `
+                <h3>Geçmiş etkinlik fotoğrafları</h3>
+                <div class="photo-carousel">
+                  ${activity.galleryImages.map((url, index) => `<img src="${url}" alt="${activity.title} geçmiş etkinlik fotoğrafı ${index + 1}" />`).join("")}
+                </div>
+              `
+              : ""
+          }
           <h3>Seanslar</h3>
           <div class="sessions">
             ${activity.sessions
@@ -1067,26 +1097,39 @@ function activityTable(activities) {
         <h3>Etkinliklerim</h3>
         <button class="primary-action" data-new-activity>Yeni etkinlik</button>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Etkinlik</th><th>Kategori</th><th>Yer</th><th>Seans</th><th>Durum</th><th>Aksiyon</th></tr></thead>
-          <tbody>${activities.map((activity) => {
+      <div class="vendor-activity-grid">
+        ${
+          activities.length
+            ? activities.map((activity) => {
             const firstSession = activity.sessions[0];
-            return `<tr>
-              <td>${activity.title}<br><span class="muted">${activity.minAge}-${activity.maxAge} yaş</span></td>
-              <td>${activity.category}</td>
-              <td>${activity.district}<br><span class="muted">${activity.address || "Adres yok"}</span></td>
-              <td>${firstSession ? `${dateTime(firstSession.start)}<br><span class="muted">${durationMinutes(firstSession.start, firstSession.end)} dk</span>` : "Seans yok"}</td>
-              <td>${statusPill(activity.status)}</td>
-              <td>
+            return `
+              <article class="vendor-activity-card">
+                <div class="vendor-activity-thumb" style="${activity.imageUrl ? `--image:url('${activity.imageUrl}')` : `--visual:${activity.visual}`}"></div>
+                <div class="vendor-activity-content">
+                  <div class="panel-heading">
+                    <div>
+                      <h3>${activity.title}</h3>
+                      <p class="muted">${activity.category} · ${activity.minAge}-${activity.maxAge} yaş</p>
+                    </div>
+                    ${statusPill(activity.status)}
+                  </div>
+                  <div class="tag-row">
+                    <span class="tag">${activity.participationType === "private" ? "Bire bir" : "Toplu"}</span>
+                    <span class="tag">${remainingLabel(activity)}</span>
+                    <span class="tag">${activity.district}</span>
+                    ${firstSession ? `<span class="tag">${dateTime(firstSession.start)} · ${durationMinutes(firstSession.start, firstSession.end)} dk</span>` : ""}
+                  </div>
+                  <p class="muted">${activity.address || activity.locationQuery || "Mekan bilgisi yok"}</p>
+                </div>
                 <div class="button-row">
                   <button class="ghost-action" data-edit-activity="${activity.id}">Düzenle</button>
                   <button class="ghost-action danger-action" data-delete-activity="${activity.id}">Kaldır</button>
                 </div>
-              </td>
-            </tr>`;
-          }).join("")}</tbody>
-        </table>
+              </article>
+            `;
+          }).join("")
+            : `<div class="empty-state">Henüz etkinlik yok.</div>`
+        }
       </div>
     </div>
   `;
@@ -1183,6 +1226,7 @@ function newActivityForm(vendor) {
       <form id="activityForm" class="form-grid">
         <input type="hidden" name="activityId" value="${editingActivity?.id ?? ""}" />
         <input type="hidden" name="currentImageUrl" value="${editingActivity?.imageUrl ?? ""}" />
+        <input type="hidden" name="currentGalleryImages" value="${(editingActivity?.galleryImages ?? []).join("|")}" />
         <label><span>Başlık</span><input name="title" required placeholder="Yaratıcı drama atölyesi" value="${editingActivity?.title ?? ""}" /></label>
         <label><span>Kategori</span><select name="category">${["Oyun grubu", "Sanat atölyesi", "Spor", "Müzik", "Dans", "Drama", "Müze/gezi", "Bilim/STEM", "Doğa"].map((item) => `<option ${editingActivity?.category === item ? "selected" : ""}>${item}</option>`).join("")}</select></label>
         <label><span>Katılım tipi</span><select name="participationType"><option value="group" ${editingActivity?.participationType !== "private" ? "selected" : ""}>Toplu etkinlik</option><option value="private" ${editingActivity?.participationType === "private" ? "selected" : ""}>Bire bir etkinlik</option></select></label>
@@ -1190,20 +1234,26 @@ function newActivityForm(vendor) {
         <label><span>Min yaş</span><input name="minAge" type="number" min="0" max="12" value="${editingActivity?.minAge ?? 5}" /></label>
         <label><span>Max yaş</span><input name="maxAge" type="number" min="0" max="12" value="${editingActivity?.maxAge ?? 8}" /></label>
         <label><span>İlçe</span><input name="district" value="${editingActivity?.district ?? vendor.district}" /></label>
-        <label><span>Adres / mekan</span><input name="address" required value="${editingActivity?.address ?? ""}" placeholder="Atölye adı, açık adres" /></label>
-        <label><span>Enlem</span><input name="lat" type="number" step="0.000001" value="${editingActivity?.lat ?? ""}" placeholder="41.0082" /></label>
-        <label><span>Boylam</span><input name="lng" type="number" step="0.000001" value="${editingActivity?.lng ?? ""}" placeholder="28.9784" /></label>
+        <label><span>Mekan / işletme adı</span><input name="locationQuery" required value="${editingActivity?.locationQuery ?? editingActivity?.address ?? ""}" placeholder="Örn. Pera Müzesi, Beyoğlu" /></label>
+        <label class="wide"><span>Adres notu</span><input name="address" value="${editingActivity?.address ?? ""}" placeholder="Kat, salon, buluşma noktası gibi ek bilgi" /></label>
         <label><span>Tarih</span><input name="date" type="date" value="${startDate}" required /></label>
         <label><span>Başlangıç saati</span><input name="startTime" type="time" value="${startTime}" required /></label>
         <label><span>Bitiş saati</span><input name="endTime" type="time" value="${endTime}" /></label>
         <label><span>Toplam süre (dk)</span><input name="duration" type="number" min="30" step="15" value="${duration}" required /></label>
         <label><span>Fiyat</span><input name="price" type="number" value="${editingActivity?.price ?? 600}" /></label>
-        <label class="wide"><span>Etkinlik fotoğrafı</span><input name="image" type="file" accept="image/*" /></label>
+        <label class="wide"><span>Ana etkinlik görseli / thumbnail</span><input name="image" type="file" accept="image/*" /></label>
         ${editingActivity?.imageUrl ? `<div class="wide image-preview"><img src="${editingActivity.imageUrl}" alt="${editingActivity.title} fotoğrafı" /></div>` : ""}
+        <label class="wide"><span>Geçmiş etkinlik fotoğrafları</span><input name="galleryImages" type="file" accept="image/*" multiple /></label>
+        ${
+          editingActivity?.galleryImages?.length
+            ? `<div class="wide photo-carousel">${editingActivity.galleryImages.map((url, index) => `<img src="${url}" alt="${editingActivity.title} galeri ${index + 1}" />`).join("")}</div>`
+            : ""
+        }
         <label class="wide"><span>Açıklama</span><textarea name="description" required>${editingActivity?.description ?? ""}</textarea></label>
         <div class="wide map-frame compact-map">
-          <iframe title="Etkinlik konum önizlemesi" src="${mapEmbedUrl(editingActivity ?? { lat: 41.0082, lng: 28.9784 })}" loading="lazy"></iframe>
+          <iframe title="Etkinlik konum önizlemesi" src="${mapEmbedUrl(editingActivity ?? { locationQuery: "İstanbul" })}" loading="lazy"></iframe>
         </div>
+        <button class="ghost-action wide map-link" type="button" data-open-map-search>Mekan adını Google Maps'te kontrol et</button>
         <button class="primary-action wide" type="submit">${editingActivity ? "Etkinliği güncelle" : "Pending etkinlik oluştur"}</button>
       </form>
     </div>
@@ -1225,8 +1275,17 @@ async function createActivity(form) {
   const activityId = String(data.get("activityId") || "");
   const existingActivity = state.activities.find((activity) => activity.id === activityId);
   const imageFile = form.elements.image?.files?.[0];
+  const galleryFiles = form.elements.galleryImages?.files;
   let imageUrl = String(data.get("currentImageUrl") || "");
+  let galleryImages = String(data.get("currentGalleryImages") || "")
+    .split("|")
+    .filter(Boolean);
   if (imageFile && !state.supabaseReady) imageUrl = await fileToDataUrl(imageFile);
+  if (galleryFiles?.length && !state.supabaseReady) {
+    const localGallery = [];
+    for (const file of Array.from(galleryFiles)) localGallery.push(await fileToDataUrl(file));
+    galleryImages = [...galleryImages, ...localGallery];
+  }
   const date = String(data.get("date"));
   const startTime = String(data.get("startTime"));
   const endTime = String(data.get("endTime"));
@@ -1235,8 +1294,7 @@ async function createActivity(form) {
   const endAt = endTime ? `${date}T${endTime}:00` : localDateTimeFromDuration(date, startTime, duration);
   const participationType = String(data.get("participationType") || "group");
   const capacity = participationType === "private" ? 1 : Number(data.get("capacity") || 8);
-  const lat = data.get("lat") === "" ? null : Number(data.get("lat"));
-  const lng = data.get("lng") === "" ? null : Number(data.get("lng"));
+  const locationQuery = String(data.get("locationQuery") || "").trim();
   const activity = {
     id: activityId || `act-${Date.now()}`,
     vendorId: existingActivity?.vendorId ?? "ven-1",
@@ -1248,12 +1306,14 @@ async function createActivity(form) {
     maxAge: Number(data.get("maxAge")),
     district: data.get("district"),
     address: data.get("address"),
-    lat,
-    lng,
+    locationQuery,
+    lat: existingActivity?.lat ?? null,
+    lng: existingActivity?.lng ?? null,
     price: Number(data.get("price")),
     status: "pending",
     visual: existingActivity?.visual ?? "linear-gradient(135deg, #0f766e, #2563eb 55%, #e85d45)",
     imageUrl,
+    galleryImages,
     description: data.get("description"),
     cancellation: "Etkinlikten 24 saat öncesine kadar ücretsiz iptal.",
     parentParticipation: "Satıcı tarafından belirlenecek.",
@@ -1300,6 +1360,16 @@ async function createActivity(form) {
           notify(`Fotoğraf Storage'a yüklenemedi: ${error.message}`);
         }
       }
+      if (galleryFiles?.length) {
+        try {
+          const uploadedGallery = await uploadActivityImages(galleryFiles, vendorId);
+          galleryImages = [...galleryImages, ...uploadedGallery];
+          activity.galleryImages = galleryImages;
+          state.activities = state.activities.map((item) => (item.id === activity.id ? activity : item));
+        } catch (error) {
+          notify(`Galeri fotoğrafları yüklenemedi: ${error.message}`);
+        }
+      }
 
       const activityPayload = {
         vendor_id: vendorId,
@@ -1313,9 +1383,9 @@ async function createActivity(form) {
         participation_type: participationType,
         district: data.get("district"),
         address: data.get("address"),
-        lat,
-        lng,
+        location_query: locationQuery,
         image_url: imageUrl,
+        gallery_image_urls: galleryImages,
         status: "pending",
       };
 
@@ -1711,6 +1781,11 @@ document.addEventListener("click", (event) => {
   if (target.hasAttribute("data-cancel-activity-edit")) {
     state.editingActivityId = null;
     renderVendor();
+  }
+  if (target.hasAttribute("data-open-map-search")) {
+    const form = target.closest("form");
+    const locationQuery = form?.elements.locationQuery?.value || form?.elements.address?.value || "İstanbul";
+    window.open(googleMapsSearchUrl({ locationQuery }), "_blank", "noopener,noreferrer");
   }
   if (target.dataset.adminTab) {
     state.adminTab = target.dataset.adminTab;

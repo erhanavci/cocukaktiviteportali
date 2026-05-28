@@ -513,6 +513,30 @@ input[type="range"] {
   object-fit: cover;
 }
 
+.photo-carousel {
+  display: grid;
+  grid-auto-columns: minmax(180px, 260px);
+  grid-auto-flow: column;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.photo-carousel img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.map-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  text-decoration: none;
+}
+
 .sessions {
   display: grid;
   gap: 10px;
@@ -576,6 +600,37 @@ input[type="range"] {
   overflow: auto;
   border: 1px solid var(--line);
   border-radius: 8px;
+}
+
+.vendor-activity-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.vendor-activity-card {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.vendor-activity-thumb {
+  width: 150px;
+  aspect-ratio: 4 / 3;
+  border-radius: 8px;
+  background:
+    linear-gradient(0deg, rgba(23, 32, 38, 0.15), rgba(23, 32, 38, 0.15)),
+    var(--image, var(--visual));
+  background-position: center;
+  background-size: cover;
+}
+
+.vendor-activity-content {
+  min-width: 0;
 }
 
 table {
@@ -791,6 +846,14 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
+  .vendor-activity-card {
+    grid-template-columns: 120px minmax(0, 1fr);
+  }
+
+  .vendor-activity-card > .button-row {
+    grid-column: 1 / -1;
+  }
+
   .side-tabs {
     position: static;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -836,6 +899,14 @@ button:disabled {
   .child-card {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .vendor-activity-card {
+    grid-template-columns: 1fr;
+  }
+
+  .vendor-activity-thumb {
+    width: 100%;
   }
 
   .section-heading,

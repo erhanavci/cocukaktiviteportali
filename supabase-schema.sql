@@ -92,18 +92,22 @@ create table if not exists public.activities (
   participation_type text not null default 'group' check (participation_type in ('group', 'private')),
   district text not null,
   address text,
+  location_query text,
   lat numeric(10, 7),
   lng numeric(10, 7),
   status public.record_status not null default 'pending',
   cancellation_policy text not null default 'Etkinlikten 24 saat öncesine kadar ücretsiz iptal.',
   image_url text,
+  gallery_image_urls text[] not null default '{}',
   created_at timestamptz not null default now()
 );
 
 alter table public.activities add column if not exists address text;
+alter table public.activities add column if not exists location_query text;
 alter table public.activities add column if not exists lat numeric(10, 7);
 alter table public.activities add column if not exists lng numeric(10, 7);
 alter table public.activities add column if not exists image_url text;
+alter table public.activities add column if not exists gallery_image_urls text[] not null default '{}';
 alter table public.activities add column if not exists participation_type text not null default 'group';
 alter table public.activities drop constraint if exists activities_participation_type_check;
 alter table public.activities add constraint activities_participation_type_check check (participation_type in ('group', 'private'));
