@@ -323,6 +323,17 @@ drop policy if exists "profiles self or admin" on public.profiles;
 create policy "profiles self or admin" on public.profiles
 for select using (id = auth.uid() or public.is_admin());
 
+drop policy if exists "profiles booking vendor read" on public.profiles;
+create policy "profiles booking vendor read" on public.profiles
+for select using (exists (
+  select 1
+  from public.bookings b
+  join public.activity_sessions s on s.id = b.session_id
+  join public.activities a on a.id = s.activity_id
+  join public.vendor_users vu on vu.vendor_id = a.vendor_id
+  where b.user_id = profiles.id and vu.user_id = auth.uid()
+));
+
 drop policy if exists "profiles self insert" on public.profiles;
 create policy "profiles self insert" on public.profiles
 for insert with check (id = auth.uid() and (role <> 'admin' or email = 'esinaykanat@gmail.com'));
@@ -336,6 +347,18 @@ drop policy if exists "children owner access" on public.children;
 create policy "children owner access" on public.children
 for all using (user_id = auth.uid() or public.is_admin())
 with check (user_id = auth.uid() or public.is_admin());
+
+drop policy if exists "children booking vendor read" on public.children;
+create policy "children booking vendor read" on public.children
+for select using (exists (
+  select 1
+  from public.booking_participants bp
+  join public.bookings b on b.id = bp.booking_id
+  join public.activity_sessions s on s.id = b.session_id
+  join public.activities a on a.id = s.activity_id
+  join public.vendor_users vu on vu.vendor_id = a.vendor_id
+  where bp.child_id = children.id and vu.user_id = auth.uid()
+));
 
 drop policy if exists "public approved vendors" on public.vendors;
 create policy "public approved vendors" on public.vendors
@@ -426,6 +449,17 @@ for all using (public.is_admin() or exists (
 ))
 with check (public.is_admin() or exists (
   select 1 from public.bookings b where b.id = booking_participants.booking_id and b.user_id = auth.uid()
+));
+
+drop policy if exists "booking participants vendor read" on public.booking_participants;
+create policy "booking participants vendor read" on public.booking_participants
+for select using (exists (
+  select 1
+  from public.bookings b
+  join public.activity_sessions s on s.id = b.session_id
+  join public.activities a on a.id = s.activity_id
+  join public.vendor_users vu on vu.vendor_id = a.vendor_id
+  where b.id = booking_participants.booking_id and vu.user_id = auth.uid()
 ));
 
 drop policy if exists "favorites owner access" on public.favorites;

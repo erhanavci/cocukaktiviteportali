@@ -730,6 +730,17 @@ input[type="range"] {
   font-weight: 800;
 }
 
+.session-editor {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr)) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
 .check-row {
   display: flex;
   grid-template-columns: none;
@@ -1099,6 +1110,10 @@ button:disabled {
   .role-choice-grid,
   .form-grid,
   .calendar-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .session-editor {
     grid-template-columns: 1fr;
   }
 

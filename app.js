@@ -12,6 +12,7 @@ const state = {
   notifications: [],
   readNotifications: new Set(),
   notificationOpen: false,
+  authRedirecting: false,
   supportTickets: [],
   categories: ["Oyun grubu", "Sanat atölyesi", "Spor", "Müzik", "Dans", "Drama", "Müze/gezi", "Bilim/STEM", "Doğa", "Ebeveyn-çocuk", "Tatil kampı", "Düzenli kurs"],
   authMode: "choice",
@@ -232,6 +233,10 @@ async function initSupabase() {
   state.supabaseClient.auth.onAuthStateChange(async (_event, session) => {
     await setSupabaseUser(session?.user ?? null);
     await loadMarketplaceData();
+    if (session?.user && state.authRedirecting) {
+      state.route = "home";
+      state.authRedirecting = false;
+    }
     render();
   });
 }
@@ -530,7 +535,7 @@ async function loadBookingData() {
 
   const { data, error } = await state.supabaseClient
     .from("bookings")
-    .select("*")
+    .select("*, user:profiles(email, full_name), participants:booking_participants(child_id, child:children(id, name, age))")
     .order("created_at", { ascending: false });
   if (error || !data) return;
 
@@ -545,7 +550,11 @@ async function loadBookingData() {
         id: booking.id,
         activityId: found.activity.id,
         sessionId: booking.session_id,
-        childId: "",
+        childId: booking.participants?.[0]?.child_id ?? "",
+        childIds: (booking.participants ?? []).map((participant) => participant.child_id),
+        childNames: (booking.participants ?? []).map((participant) => participant.child?.name).filter(Boolean),
+        buyerName: booking.user?.full_name || booking.user?.email || "",
+        buyerEmail: booking.user?.email || "",
         status: booking.status,
         paymentProvider: "Supabase",
         totalAmount,
@@ -1225,7 +1234,10 @@ function renderDetail() {
           <h2>${activity.title}</h2>
           <p class="muted">${vendor.name} · ${activity.district} · ${activity.minAge}-${activity.maxAge} yaş</p>
         </div>
-        ${statusPill(activity.status)}
+        <div class="button-row">
+          ${statusPill(activity.status)}
+          ${isAdmin() && activity.status === "pending" ? `<button class="primary-action" data-approve-activity="${activity.id}">Etkinliği onayla</button>` : ""}
+        </div>
       </div>
       <div class="detail-layout">
         <article class="panel">
@@ -1420,6 +1432,23 @@ function updateBookingEstimate(form = document.querySelector("#bookingForm")) {
   });
 }
 
+function updateSessionDuration(row) {
+  const date = row.querySelector('input[name="sessionDate"]')?.value || "2026-06-10";
+  const start = row.querySelector('input[name="sessionStartTime"]')?.value;
+  const end = row.querySelector('input[name="sessionEndTime"]')?.value;
+  const durationInput = row.querySelector('input[name="sessionDuration"]');
+  if (!start || !end || !durationInput) return;
+  const minutes = durationMinutes(`${date}T${start}:00`, `${date}T${end}:00`);
+  durationInput.value = minutes;
+}
+
+function addSessionEditor() {
+  const container = document.querySelector("#activitySessions");
+  const addButton = container?.querySelector("[data-add-session]");
+  if (!container || !addButton) return;
+  addButton.insertAdjacentHTML("beforebegin", sessionEditorRow({}, container.querySelectorAll("[data-session-editor]").length));
+}
+
 function renderBookings() {
   if (!state.currentUser || (!isParent() && !isAdmin())) {
     renderAccessGate("Ebeveyn hesabı gerekli", "Rezervasyonlarım ve favoriler alanı ebeveyn hesabıyla görüntülenir.");
@@ -1473,9 +1502,9 @@ function renderBookings() {
 function bookingCard(booking) {
   const { activity, session } = getSession(booking.sessionId);
   const childIds = booking.childIds?.length ? booking.childIds : [booking.childId].filter(Boolean);
-  const childNames = childIds
-    .map((id) => state.children.find((item) => item.id === id)?.name)
-    .filter(Boolean);
+  const childNames = booking.childNames?.length
+    ? booking.childNames
+    : childIds.map((id) => state.children.find((item) => item.id === id)?.name).filter(Boolean);
   return `
     <article class="booking-card">
       <div class="panel-heading">
@@ -1492,6 +1521,14 @@ function bookingCard(booking) {
       </div>
     </article>
   `;
+}
+
+function bookingParticipantSummary(booking) {
+  const childIds = booking.childIds?.length ? booking.childIds : [booking.childId].filter(Boolean);
+  const childNames = booking.childNames?.length
+    ? booking.childNames
+    : childIds.map((id) => state.children.find((item) => item.id === id)?.name).filter(Boolean);
+  return childNames.join(", ") || `${childIds.length || 1} katılımcı`;
 }
 
 function renderVendor() {
@@ -1638,17 +1675,17 @@ function calendarPanel(activities) {
 function bookingTable(bookings) {
   return `
     <div class="panel">
-      <h3>Rezervasyon listesi</h3>
+      <h3>Satılan etkinlikler</h3>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Etkinlik</th><th>Seans</th><th>Tutar</th><th>Durum</th></tr></thead>
+          <thead><tr><th>Etkinlik</th><th>Seans</th><th>Satın alan</th><th>Katılımcı çocuk</th><th>Tutar</th><th>Durum</th><th>Detay</th></tr></thead>
           <tbody>${
             bookings.length
               ? bookings.map((booking) => {
                   const { activity, session } = getSession(booking.sessionId);
-                  return `<tr><td>${activity.title}</td><td>${dateTime(session.start)}</td><td>${money(booking.totalAmount)}</td><td>${statusPill(booking.status)}</td></tr>`;
+                  return `<tr><td>${activity.title}</td><td>${dateTime(session.start)}</td><td>${booking.buyerName || booking.buyerEmail || "-"}</td><td>${bookingParticipantSummary(booking)}</td><td>${money(booking.totalAmount)}</td><td>${statusPill(booking.status)}</td><td><button class="ghost-action" data-detail="${activity.id}">Etkinlik</button></td></tr>`;
                 }).join("")
-              : `<tr><td colspan="4">Henüz rezervasyon yok.</td></tr>`
+              : `<tr><td colspan="7">Henüz rezervasyon yok.</td></tr>`
           }</tbody>
         </table>
       </div>
@@ -1680,11 +1717,9 @@ function revenuePanel(bookings) {
 
 function newActivityForm(vendor) {
   const editingActivity = state.activities.find((activity) => activity.id === state.editingActivityId);
-  const session = editingActivity?.sessions?.[0];
-  const startDate = dateOnly(session?.start) || "2026-06-10";
-  const startTime = timeOnly(session?.start) || "13:00";
-  const endTime = timeOnly(session?.end) || "15:00";
-  const duration = session ? durationMinutes(session.start, session.end) : 120;
+  const sessions = editingActivity?.sessions?.length
+    ? editingActivity.sessions
+    : [{ start: "2026-06-10T13:00:00", end: "2026-06-10T15:00:00", capacity: 8, price: editingActivity?.price ?? 600 }];
 
   return `
     <div class="panel">
@@ -1702,17 +1737,16 @@ function newActivityForm(vendor) {
         <label><span>Başlık</span><input name="title" required placeholder="Yaratıcı drama atölyesi" value="${editingActivity?.title ?? ""}" /></label>
         <label><span>Kategori</span><select name="category">${["Oyun grubu", "Sanat atölyesi", "Spor", "Müzik", "Dans", "Drama", "Müze/gezi", "Bilim/STEM", "Doğa"].map((item) => `<option ${editingActivity?.category === item ? "selected" : ""}>${item}</option>`).join("")}</select></label>
         <label><span>Katılım tipi</span><select name="participationType"><option value="group" ${editingActivity?.participationType !== "private" ? "selected" : ""}>Toplu etkinlik</option><option value="private" ${editingActivity?.participationType === "private" ? "selected" : ""}>Bire bir etkinlik</option></select></label>
-        <label><span>Maksimum kişi sayısı</span><input name="capacity" type="number" min="1" value="${session?.capacity ?? 8}" /></label>
         <label><span>Min yaş</span><input name="minAge" type="number" min="0" max="12" value="${editingActivity?.minAge ?? 5}" /></label>
         <label><span>Max yaş</span><input name="maxAge" type="number" min="0" max="12" value="${editingActivity?.maxAge ?? 8}" /></label>
         <label><span>İlçe</span><input name="district" value="${editingActivity?.district ?? vendor.district}" /></label>
         <label><span>Mekan / işletme adı</span><input name="locationQuery" required value="${editingActivity?.locationQuery ?? editingActivity?.address ?? ""}" placeholder="Örn. Pera Müzesi, Beyoğlu" /></label>
         <label class="wide"><span>Adres notu</span><input name="address" value="${editingActivity?.address ?? ""}" placeholder="Kat, salon, buluşma noktası gibi ek bilgi" /></label>
-        <label><span>Tarih</span><input name="date" type="date" value="${startDate}" required /></label>
-        <label><span>Başlangıç saati</span><input name="startTime" type="time" value="${startTime}" required /></label>
-        <label><span>Bitiş saati</span><input name="endTime" type="time" value="${endTime}" /></label>
-        <label><span>Toplam süre (dk)</span><input name="duration" type="number" min="30" step="15" value="${duration}" required /></label>
-        <label><span>Fiyat</span><input name="price" type="number" value="${editingActivity?.price ?? 600}" /></label>
+        <fieldset class="wide option-group" id="activitySessions">
+          <legend>Seanslar</legend>
+          ${sessions.map((session, index) => sessionEditorRow(session, index)).join("")}
+          <button class="ghost-action" type="button" data-add-session>Seans ekle</button>
+        </fieldset>
         <label class="wide"><span>Ana etkinlik görseli / thumbnail</span><input name="image" type="file" accept="image/*" data-preview-target="coverPreview" /></label>
         <div class="wide media-grid" id="coverPreview">
           ${
@@ -1735,6 +1769,25 @@ function newActivityForm(vendor) {
         <button class="ghost-action wide map-link" type="button" data-open-map-search>Mekan adını Google Maps'te kontrol et</button>
         <button class="primary-action wide" type="submit">${editingActivity ? "Etkinliği güncelle" : "Pending etkinlik oluştur"}</button>
       </form>
+    </div>
+  `;
+}
+
+function sessionEditorRow(session = {}, index = 0) {
+  const date = dateOnly(session.start) || "2026-06-10";
+  const startTime = timeOnly(session.start) || "13:00";
+  const endTime = timeOnly(session.end) || "15:00";
+  const duration = session.start && session.end ? durationMinutes(session.start, session.end) : 120;
+  return `
+    <div class="session-editor" data-session-editor>
+      <input type="hidden" name="sessionId" value="${session.id ?? ""}" />
+      <label><span>Tarih</span><input name="sessionDate" type="date" value="${date}" required /></label>
+      <label><span>Başlangıç</span><input name="sessionStartTime" type="time" value="${startTime}" required data-session-time /></label>
+      <label><span>Bitiş</span><input name="sessionEndTime" type="time" value="${endTime}" required data-session-time /></label>
+      <label><span>Süre (dk)</span><input name="sessionDuration" type="number" min="30" step="15" value="${duration}" required readonly /></label>
+      <label><span>Kişi sayısı</span><input name="sessionCapacity" type="number" min="1" value="${session.capacity ?? 8}" /></label>
+      <label><span>Fiyat</span><input name="sessionPrice" type="number" min="0" value="${session.price ?? 600}" /></label>
+      ${index > 0 ? `<button class="ghost-action danger-action" type="button" data-remove-session>Seansı kaldır</button>` : ""}
     </div>
   `;
 }
@@ -1765,21 +1818,35 @@ async function createActivity(form) {
     for (const file of Array.from(galleryFiles)) localGallery.push(await fileToDataUrl(file));
     galleryImages = [...galleryImages, ...localGallery];
   }
-  const date = String(data.get("date"));
-  const startTime = String(data.get("startTime"));
-  const endTime = String(data.get("endTime"));
-  const duration = Number(data.get("duration") || 120);
-  const startAt = `${date}T${startTime}:00`;
-  const endAt = endTime ? `${date}T${endTime}:00` : localDateTimeFromDuration(date, startTime, duration);
   const participationType = String(data.get("participationType") || "group");
-  const capacity = participationType === "private" ? 1 : Number(data.get("capacity") || 8);
   const locationQuery = String(data.get("locationQuery") || "").trim();
+  const sessionIds = data.getAll("sessionId").map(String);
+  const sessionDates = data.getAll("sessionDate").map(String);
+  const sessionStarts = data.getAll("sessionStartTime").map(String);
+  const sessionEnds = data.getAll("sessionEndTime").map(String);
+  const sessionCapacities = data.getAll("sessionCapacity").map(Number);
+  const sessionPrices = data.getAll("sessionPrice").map(Number);
+  const sessions = sessionDates.map((date, index) => {
+    const startAt = `${date}T${sessionStarts[index] || "13:00"}:00`;
+    const endAt = `${date}T${sessionEnds[index] || "15:00"}:00`;
+    const existingSession = existingActivity?.sessions?.[index];
+    return {
+      id: sessionIds[index] || existingSession?.id || `ses-${Date.now()}-${index}`,
+      start: startAt,
+      end: endAt,
+      capacity: participationType === "private" ? 1 : Math.max(1, sessionCapacities[index] || 8),
+      reserved: existingSession?.reserved ?? 0,
+      price: Math.max(0, sessionPrices[index] || 0),
+      status: "active",
+    };
+  });
+  const firstSession = sessions[0];
   const activity = {
     id: activityId || `act-${Date.now()}`,
     vendorId: existingActivity?.vendorId ?? "ven-1",
     title: data.get("title"),
     category: data.get("category"),
-    type: "Tek seans",
+    type: sessions.length > 1 ? "Çoklu seans" : "Tek seans",
     participationType,
     minAge: Number(data.get("minAge")),
     maxAge: Number(data.get("maxAge")),
@@ -1788,7 +1855,7 @@ async function createActivity(form) {
     locationQuery,
     lat: existingActivity?.lat ?? null,
     lng: existingActivity?.lng ?? null,
-    price: Number(data.get("price")),
+    price: Number(firstSession?.price ?? 0),
     status: "pending",
     visual: existingActivity?.visual ?? "linear-gradient(135deg, #0f766e, #2563eb 55%, #e85d45)",
     imageUrl,
@@ -1796,17 +1863,7 @@ async function createActivity(form) {
     description: data.get("description"),
     cancellation: "Etkinlikten 24 saat öncesine kadar ücretsiz iptal.",
     parentParticipation: "Satıcı tarafından belirlenecek.",
-    sessions: [
-      {
-        id: existingActivity?.sessions?.[0]?.id ?? `ses-${Date.now()}`,
-        start: startAt,
-        end: endAt,
-        capacity,
-        reserved: existingActivity?.sessions?.[0]?.reserved ?? 0,
-        price: Number(data.get("price")),
-        status: "active",
-      },
-    ],
+    sessions,
   };
 
   if (activityId) {
@@ -1863,7 +1920,7 @@ async function createActivity(form) {
         description: data.get("description"),
         min_age: Number(data.get("minAge")),
         max_age: Number(data.get("maxAge")),
-        activity_type: "Tek seans",
+        activity_type: sessions.length > 1 ? "Çoklu seans" : "Tek seans",
         participation_type: participationType,
         district: data.get("district"),
         address: data.get("address"),
@@ -1881,19 +1938,21 @@ async function createActivity(form) {
       const { data: dbActivity, error } = await activityRequest;
 
       if (!error && dbActivity) {
-        const sessionPayload = {
-          activity_id: dbActivity.id,
-          start_at: `${startAt}+03:00`,
-          end_at: `${endAt}+03:00`,
-          capacity,
-          price: Number(data.get("price")),
-          status: "active",
-        };
-        const existingSessionId = existingActivity?.sessions?.[0]?.id;
-        if (activityId && existingSessionId && !String(existingSessionId).startsWith("ses-")) {
-          await state.supabaseClient.from("activity_sessions").update(sessionPayload).eq("id", existingSessionId);
-        } else {
-          await state.supabaseClient.from("activity_sessions").insert({ ...sessionPayload, reserved_count: 0 });
+        for (const [index, sessionItem] of sessions.entries()) {
+          const sessionPayload = {
+            activity_id: dbActivity.id,
+            start_at: `${sessionItem.start}+03:00`,
+            end_at: `${sessionItem.end}+03:00`,
+            capacity: sessionItem.capacity,
+            price: sessionItem.price,
+            status: "active",
+          };
+          const existingSessionId = sessionIds[index] || existingActivity?.sessions?.[index]?.id;
+          if (activityId && existingSessionId && !String(existingSessionId).startsWith("ses-")) {
+            await state.supabaseClient.from("activity_sessions").update(sessionPayload).eq("id", existingSessionId);
+          } else {
+            await state.supabaseClient.from("activity_sessions").insert({ ...sessionPayload, reserved_count: 0 });
+          }
         }
       }
 
@@ -2002,7 +2061,7 @@ function renderAdmin() {
 }
 
 function adminTabLabel(tab) {
-  return { approvals: "Onaylar", payments: "Ödemeler", commissions: "Komisyonlar", categories: "Kategoriler", support: "Destek" }[tab];
+  return { approvals: "Onaylar", payments: "Satılan etkinlikler", commissions: "Komisyonlar", categories: "Kategoriler", support: "Destek" }[tab];
 }
 
 function adminPanel() {
@@ -2014,7 +2073,7 @@ function adminPanel() {
         <h3>Onay bekleyen firmalar</h3>
         ${pendingVendors.map((vendor) => `<div class="mini-card"><strong>${vendor.name}</strong><p class="muted">${vendor.district} · ${vendor.plan}</p><button class="primary-action" data-approve-vendor="${vendor.id}">Firmayı onayla</button></div>`).join("") || `<div class="empty-state">Firma onayı beklemiyor.</div>`}
         <h3>Onay bekleyen etkinlikler</h3>
-        ${pendingActivities.map((activity) => `<div class="mini-card"><strong>${activity.title}</strong><p class="muted">${activity.category} · ${getVendor(activity.vendorId).name}</p><button class="primary-action" data-approve-activity="${activity.id}">Etkinliği onayla</button></div>`).join("") || `<div class="empty-state">Etkinlik onayı beklemiyor.</div>`}
+        ${pendingActivities.map((activity) => `<div class="mini-card child-card"><div><strong>${activity.title}</strong><p class="muted">${activity.category} · ${getVendor(activity.vendorId)?.name ?? "Firma"}</p></div><div class="button-row"><button class="ghost-action" data-detail="${activity.id}">Önizle</button><button class="primary-action" data-approve-activity="${activity.id}">Etkinliği onayla</button></div></div>`).join("") || `<div class="empty-state">Etkinlik onayı beklemiyor.</div>`}
       </div>
     `;
   }
@@ -2077,8 +2136,8 @@ function adminPaymentTable() {
       <h3>Satılan etkinlikler</h3>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Etkinlik</th><th>Firma</th><th>Provider</th><th>Tutar</th><th>Durum</th><th>Aksiyon</th></tr></thead>
-          <tbody>${rows.map(({ booking, activity, vendor }) => `<tr><td>${activity?.title ?? booking.id}</td><td>${vendor?.name ?? "-"}</td><td>${booking.paymentProvider}</td><td>${money(booking.totalAmount)}</td><td>${statusPill(booking.status)}</td><td><button class="ghost-action" data-refund="${booking.id}">İade başlat</button></td></tr>`).join("") || `<tr><td colspan="6">Satış kaydı yok.</td></tr>`}</tbody>
+          <thead><tr><th>Etkinlik</th><th>Firma</th><th>Satın alan</th><th>Katılımcı çocuk</th><th>Tutar</th><th>Durum</th><th>Aksiyon</th></tr></thead>
+          <tbody>${rows.map(({ booking, activity, vendor }) => `<tr><td>${activity?.title ?? booking.id}</td><td>${vendor?.name ?? "-"}</td><td>${booking.buyerName || booking.buyerEmail || "-"}</td><td>${bookingParticipantSummary(booking)}</td><td>${money(booking.totalAmount)}</td><td>${statusPill(booking.status)}</td><td><button class="ghost-action" data-refund="${booking.id}">İade başlat</button></td></tr>`).join("") || `<tr><td colspan="7">Satış kaydı yok.</td></tr>`}</tbody>
         </table>
       </div>
     </div>
@@ -2179,6 +2238,7 @@ async function handleLogin(form) {
   const password = String(data.get("password"));
   const submitButton = form.querySelector('button[type="submit"]');
   if (submitButton) submitButton.disabled = true;
+  state.authRedirecting = true;
 
   if (!state.supabaseReady) {
     state.currentUser = { id: `demo-${Date.now()}`, email };
@@ -2197,6 +2257,7 @@ async function handleLogin(form) {
   if (submitButton) submitButton.disabled = false;
   if (error) {
     notify(formatSupabaseError(error));
+    state.authRedirecting = false;
     return;
   }
   state.currentUser = authData.user;
@@ -2210,6 +2271,7 @@ async function handleLogin(form) {
   setRoute("home");
   await setSupabaseUser(authData.user);
   await loadMarketplaceData();
+  state.authRedirecting = false;
   render();
 }
 
@@ -2223,6 +2285,7 @@ async function handleSignup(form) {
   const vendorName = String(data.get("vendorName") || "").trim();
   const submitButton = form.querySelector('button[type="submit"]');
   if (submitButton) submitButton.disabled = true;
+  state.authRedirecting = true;
 
   if (!state.supabaseReady) {
     state.currentUser = { id: `demo-${Date.now()}`, email };
@@ -2251,12 +2314,14 @@ async function handleSignup(form) {
   if (submitButton) submitButton.disabled = false;
   if (error) {
     notify(formatSupabaseError(error));
+    state.authRedirecting = false;
     return;
   }
 
   const user = authData.user;
   if (user && !authData.session) {
     notify(role === "vendor" ? "Firma üyeliği oluşturuldu. Admin onayına gönderildi; e-postayı doğrulayın." : "Üyelik oluşturuldu. E-posta doğrulama için gelen kutusunu kontrol edin.");
+    state.authRedirecting = false;
     setRoute("home");
     return;
   }
@@ -2281,6 +2346,7 @@ async function handleSignup(form) {
 
   await setSupabaseUser(user);
   await loadMarketplaceData();
+  state.authRedirecting = false;
   render();
 }
 
@@ -2447,6 +2513,8 @@ document.addEventListener("click", (event) => {
     state.vendorTab = "new";
     renderVendor();
   }
+  if (target.hasAttribute("data-add-session")) addSessionEditor();
+  if (target.hasAttribute("data-remove-session")) target.closest("[data-session-editor]")?.remove();
   if (target.dataset.editActivity) {
     state.editingActivityId = target.dataset.editActivity;
     state.vendorTab = "new";
@@ -2516,11 +2584,11 @@ document.addEventListener("click", (event) => {
 
 document.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (event.target.id === "bookingForm") createBooking(event.target);
-  if (event.target.id === "activityForm") createActivity(event.target);
-  if (event.target.id === "loginForm") handleLogin(event.target);
-  if (event.target.id === "signupForm") handleSignup(event.target);
-  if (event.target.id === "childForm") handleChildCreate(event.target);
+  if (event.target.id === "bookingForm") await createBooking(event.target);
+  if (event.target.id === "activityForm") await createActivity(event.target);
+  if (event.target.id === "loginForm") await handleLogin(event.target);
+  if (event.target.id === "signupForm") await handleSignup(event.target);
+  if (event.target.id === "childForm") await handleChildCreate(event.target);
   if (event.target.id === "categoryForm") {
     const name = new FormData(event.target).get("name");
     if (name && !state.categories.includes(name)) state.categories.push(String(name));
@@ -2608,6 +2676,9 @@ document.addEventListener("change", (event) => {
   if (event.target.matches('input[type="file"][data-preview-target]')) previewSelectedImages(event.target);
   if (event.target.matches('#bookingForm input[name="session"], #bookingForm input[name="children"]')) {
     updateBookingEstimate(event.target.closest("form"));
+  }
+  if (event.target.matches('[data-session-time], input[name="sessionDate"]')) {
+    updateSessionDuration(event.target.closest("[data-session-editor]"));
   }
 });
 
