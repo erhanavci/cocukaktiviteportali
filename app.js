@@ -7,6 +7,7 @@ const state = {
   adminTab: "approvals",
   currentUser: null,
   authProfile: null,
+  vendorIds: [],
   authMode: "choice",
   signupRole: "parent",
   editingChildId: null,
@@ -221,6 +222,7 @@ async function initSupabase() {
 async function setSupabaseUser(user) {
   state.currentUser = user;
   state.authProfile = null;
+  state.vendorIds = [];
   if (!user || !state.supabaseClient) return;
 
   const { data } = await state.supabaseClient.from("profiles").select("*").eq("id", user.id).maybeSingle();
@@ -247,6 +249,11 @@ async function setSupabaseUser(user) {
       }));
     }
   }
+
+  if (state.authProfile.role === "vendor" || user.email === ADMIN_EMAIL) {
+    const { data: vendorLinks } = await state.supabaseClient.from("vendor_users").select("vendor_id").eq("user_id", user.id);
+    state.vendorIds = vendorLinks?.map((link) => link.vendor_id) ?? [];
+  }
 }
 
 function isAdmin() {
@@ -266,6 +273,13 @@ function profileLabel() {
   if (isAdmin()) return "Admin";
   if (isVendor()) return "Satıcı";
   return "Profil";
+}
+
+function currentVendor() {
+  if (state.vendorIds.length) return state.vendors.find((vendor) => vendor.id === state.vendorIds[0]) ?? null;
+  if (!state.supabaseReady && isVendor()) return state.vendors[0] ?? null;
+  if (isAdmin()) return state.vendors[0] ?? null;
+  return null;
 }
 
 function visualForIndex(index) {
@@ -538,20 +552,14 @@ function renderAuth() {
         </div>
         <div class="detail-layout">
           <article class="panel">
-            <h3>Hesap tipi</h3>
-            <div class="tag-row">
-              <span class="tag">Rol: ${state.authProfile?.role ?? "parent"}</span>
-              <span class="tag">Admin mail: ${ADMIN_EMAIL}</span>
-              <span class="tag">${state.supabaseReady ? "Veri Supabase'de" : "Yerel demo state"}</span>
-            </div>
             ${isParent() ? parentProfilePanel() : ""}
             ${isVendor() ? vendorProfilePanel() : ""}
           </article>
           <aside class="panel">
             <h3>Panel kısayolları</h3>
             <div class="sessions">
-              <button class="ghost-action" data-route="bookings">Ebeveyn rezervasyonları</button>
-              <button class="ghost-action" data-route="vendor">Satıcı paneli</button>
+              ${isParent() ? `<button class="ghost-action" data-route="bookings">Rezervasyonlarım</button>` : ""}
+              ${isVendor() || isAdmin() ? `<button class="ghost-action" data-route="vendor">Satıcı paneli</button>` : ""}
               ${isAdmin() ? `<button class="primary-action" data-route="admin">Admin panel</button>` : ""}
             </div>
           </aside>
@@ -701,7 +709,13 @@ function parentProfilePanel() {
 }
 
 function vendorProfilePanel() {
-  const vendor = state.vendors[0];
+  const vendor = currentVendor();
+  if (!vendor) {
+    return `
+      <h3>Satıcı profili</h3>
+      <div class="empty-state">Firma bağlantısı henüz bulunamadı. Admin onayı veya firma kaydı tamamlandığında satıcı paneli aktif olur.</div>
+    `;
+  }
   return `
     <h3>Satıcı profili</h3>
     <div class="mini-card">
@@ -1032,7 +1046,11 @@ function renderVendor() {
     renderAccessGate("Satıcı hesabı gerekli", "Satıcı paneli firma hesabıyla giriş yapan kullanıcılar içindir. Yeni satıcı hesabı açıldığında firma pending statüsünde admin onayı bekler.", "Satıcı girişi / kayıt");
     return;
   }
-  const vendor = state.vendors[0];
+  const vendor = currentVendor();
+  if (!vendor) {
+    renderAccessGate("Firma bağlantısı bulunamadı", "Bu satıcı hesabına bağlı firma kaydı bulunamadı. Firma üyeliğini tamamlayın veya admin onayını kontrol edin.", "Profil");
+    return;
+  }
   const vendorActivities = state.activities.filter((activity) => activity.vendorId === vendor.id);
   const bookings = state.bookings.filter((booking) => vendorActivities.some((activity) => activity.id === booking.activityId));
   app.innerHTML = `
@@ -1662,6 +1680,7 @@ async function handleSignup(form) {
           user_id: user.id,
           role: "owner",
         });
+        state.vendorIds = [vendor.id];
       }
     }
   }
@@ -1675,6 +1694,7 @@ async function handleLogout() {
   if (state.supabaseReady) await state.supabaseClient.auth.signOut();
   state.currentUser = null;
   state.authProfile = null;
+  state.vendorIds = [];
   state.authMode = "choice";
   state.editingChildId = null;
   notify("Çıkış yapıldı.");
