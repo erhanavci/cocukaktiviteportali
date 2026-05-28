@@ -36,7 +36,8 @@ http://127.0.0.1:4173
    - Site URL: Vercel domaininiz, ör. `https://cocuk-aktivite-portali.vercel.app`
    - Redirect URLs: aynı domain ve lokal test için `http://127.0.0.1:4173`
 5. `Project Settings > API` ekranından `Project URL` ve `anon public key` değerlerini alın.
-6. Lokal test için [config.js](config.js) içine geçici olarak yazabilirsiniz:
+6. SQL dosyası `activity-images` isimli public Storage bucket'ını ve fotoğraf yükleme policy'lerini de oluşturur.
+7. Lokal test için [config.js](config.js) içine geçici olarak yazabilirsiniz:
 
 ```js
 window.SUPABASE_CONFIG = {

@@ -390,6 +390,23 @@ function fileToDataUrl(file) {
   });
 }
 
+async function uploadActivityImage(file, vendorId) {
+  if (!file || !state.supabaseClient) return "";
+
+  const extension = file.name.split(".").pop()?.toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+  const filename = `${Date.now()}-${Math.random().toString(36).slice(2)}.${extension}`;
+  const path = `${vendorId}/${filename}`;
+  const { error } = await state.supabaseClient.storage.from("activity-images").upload(path, file, {
+    cacheControl: "3600",
+    upsert: true,
+  });
+
+  if (error) throw error;
+
+  const { data } = state.supabaseClient.storage.from("activity-images").getPublicUrl(path);
+  return data.publicUrl;
+}
+
 function getVendor(id) {
   return state.vendors.find((vendor) => vendor.id === id);
 }
@@ -1208,7 +1225,8 @@ async function createActivity(form) {
   const activityId = String(data.get("activityId") || "");
   const existingActivity = state.activities.find((activity) => activity.id === activityId);
   const imageFile = form.elements.image?.files?.[0];
-  const imageUrl = imageFile ? await fileToDataUrl(imageFile) : String(data.get("currentImageUrl") || "");
+  let imageUrl = String(data.get("currentImageUrl") || "");
+  if (imageFile && !state.supabaseReady) imageUrl = await fileToDataUrl(imageFile);
   const date = String(data.get("date"));
   const startTime = String(data.get("startTime"));
   const endTime = String(data.get("endTime"));
@@ -1273,6 +1291,16 @@ async function createActivity(form) {
       .maybeSingle();
 
     if (vendorId) {
+      if (imageFile) {
+        try {
+          imageUrl = await uploadActivityImage(imageFile, vendorId);
+          activity.imageUrl = imageUrl;
+          state.activities = state.activities.map((item) => (item.id === activity.id ? activity : item));
+        } catch (error) {
+          notify(`Fotoğraf Storage'a yüklenemedi: ${error.message}`);
+        }
+      }
+
       const activityPayload = {
         vendor_id: vendorId,
         category_id: category?.id ?? null,
