@@ -459,10 +459,24 @@ function publishedActivities() {
   });
 }
 
+function routeFromPath() {
+  const path = window.location.pathname.replace(/\/+$/, "") || "/";
+  if (path === "/admin") return "admin";
+  return "home";
+}
+
+function syncPathForRoute(route) {
+  const targetPath = route === "admin" ? "/admin" : "/";
+  if (window.location.pathname !== targetPath) {
+    window.history.pushState({ route }, "", targetPath);
+  }
+}
+
 function setRoute(route, id) {
   state.route = route;
   state.selectedActivityId = id ?? state.selectedActivityId;
   document.querySelector(".primary-nav")?.classList.remove("open");
+  syncPathForRoute(route);
   render();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -484,9 +498,7 @@ function renderAccessGate(title, message, cta = "Giriş yap") {
 }
 
 function updateNav() {
-  const adminButton = document.querySelector('[data-route="admin"]');
   const authButton = document.querySelector("#authNav");
-  if (adminButton) adminButton.hidden = !isAdmin();
   if (authButton) authButton.textContent = profileLabel();
 
   document.querySelectorAll(".nav-link").forEach((button) => {
@@ -1925,4 +1937,12 @@ document.querySelector("#mobileMenu").addEventListener("click", () => {
   document.querySelector(".primary-nav").classList.toggle("open");
 });
 
-initSupabase().finally(render);
+window.addEventListener("popstate", () => {
+  state.route = routeFromPath();
+  render();
+});
+
+initSupabase().finally(() => {
+  state.route = routeFromPath();
+  render();
+});
