@@ -32,6 +32,10 @@ const state = {
       slug: "minik-renkler",
       status: "approved",
       district: "Kadıköy",
+      city: "İstanbul",
+      address: "Kadıköy",
+      description: "Sanat ve oyun odaklı çocuk atölyesi.",
+      logoUrl: "",
       commissionRate: 0.12,
       plan: "FREE",
     },
@@ -41,6 +45,10 @@ const state = {
       slug: "bilim-kutusu",
       status: "approved",
       district: "Beşiktaş",
+      city: "İstanbul",
+      address: "Beşiktaş",
+      description: "STEM ve bilim etkinlikleri.",
+      logoUrl: "",
       commissionRate: 0.12,
       plan: "FREE",
     },
@@ -50,6 +58,10 @@ const state = {
       slug: "muze-kasifleri",
       status: "pending",
       district: "Beyoğlu",
+      city: "İstanbul",
+      address: "Beyoğlu",
+      description: "Müze ve gezi deneyimleri.",
+      logoUrl: "",
       commissionRate: 0.12,
       plan: "FREE",
     },
@@ -286,14 +298,17 @@ async function ensureVendorProfile(user) {
   const { data: vendor, error } = await state.supabaseClient
     .from("vendors")
     .insert({
-      name: vendorName,
-      slug: `${String(vendorName).toLocaleLowerCase("tr-TR").replaceAll(" ", "-")}-${Date.now()}`,
-      status: "pending",
-      city: "İstanbul",
-      district: "Belirlenecek",
-      commission_rate: 0.12,
-      plan_code: "FREE",
-    })
+        name: vendorName,
+        slug: `${String(vendorName).toLocaleLowerCase("tr-TR").replaceAll(" ", "-")}-${Date.now()}`,
+        status: "pending",
+        city: "İstanbul",
+        district: "Belirlenecek",
+        address: "",
+        description: "",
+        logo_url: "",
+        commission_rate: 0.12,
+        plan_code: "FREE",
+      })
     .select("id")
     .single();
 
@@ -440,6 +455,10 @@ async function loadMarketplaceData() {
       slug: vendor.slug,
       status: vendor.status,
       district: vendor.district,
+      city: vendor.city ?? "İstanbul",
+      address: vendor.address ?? "",
+      description: vendor.description ?? "",
+      logoUrl: vendor.logo_url ?? "",
       commissionRate: Number(vendor.commission_rate ?? 0.12),
       plan: vendor.plan_code ?? "FREE",
     }));
@@ -553,6 +572,7 @@ async function loadBookingData() {
         childId: booking.participants?.[0]?.child_id ?? "",
         childIds: (booking.participants ?? []).map((participant) => participant.child_id),
         childNames: (booking.participants ?? []).map((participant) => participant.child?.name).filter(Boolean),
+        participantCount: Number(booking.participant_count ?? booking.participants?.length ?? 1),
         buyerName: booking.user?.full_name || booking.user?.email || "",
         buyerEmail: booking.user?.email || "",
         status: booking.status,
@@ -565,6 +585,7 @@ async function loadBookingData() {
       };
     })
     .filter(Boolean);
+  syncSessionReservationsFromBookings();
 }
 
 const money = (amount) =>
@@ -669,10 +690,24 @@ function getVendor(id) {
 
 function getSession(sessionId) {
   for (const activity of state.activities) {
-    const session = activity.sessions.find((item) => item.id === sessionId);
+  const session = activity.sessions.find((item) => item.id === sessionId);
     if (session) return { activity, session };
   }
   return null;
+}
+
+function syncSessionReservationsFromBookings() {
+  const reservedBySession = state.bookings.reduce((map, booking) => {
+    if (booking.status === "refunded" || booking.status === "failed") return map;
+    map[booking.sessionId] = (map[booking.sessionId] || 0) + (booking.participantCount || booking.childIds?.length || 1);
+    return map;
+  }, {});
+
+  state.activities.forEach((activity) => {
+    activity.sessions.forEach((session) => {
+      if (reservedBySession[session.id] != null) session.reserved = reservedBySession[session.id];
+    });
+  });
 }
 
 function publishedActivities() {
@@ -823,7 +858,7 @@ function updateNav() {
     authButton.innerHTML = state.currentUser
       ? `<span class="nav-avatar" aria-hidden="true">${userInitials()}</span><span>${profileLabel()}</span>`
       : "Giriş";
-    authButton.dataset.route = isAdmin() ? "admin" : "auth";
+    authButton.dataset.route = isAdmin() ? "admin" : isVendor() ? "vendor" : "auth";
   }
 
   document.querySelectorAll(".nav-link").forEach((button) => {
@@ -1388,6 +1423,7 @@ async function createBooking(form) {
     sessionId,
     childId: childIds[0],
     childIds,
+    participantCount,
     status,
     paymentProvider: paymentMethod === "online" ? "DummyPOS" : "Yerinde ödeme",
     totalAmount,
@@ -1551,11 +1587,14 @@ function renderVendor() {
           <h2>${vendor.name}</h2>
           <p class="muted">Free plan · satış başı %${Math.round(vendor.commissionRate * 100)} komisyon</p>
         </div>
-        ${statusPill(vendor.status)}
+        <div class="vendor-header-profile">
+          <span class="vendor-logo-thumb">${vendor.logoUrl ? `<img src="${vendor.logoUrl}" alt="${vendor.name} logo" />` : userInitials()}</span>
+          ${statusPill(vendor.status)}
+        </div>
       </div>
       <div class="dashboard-layout">
         <nav class="side-tabs">
-          ${["overview", "activities", "calendar", "bookings", "revenue", "new"].map((tab) => `<button class="tab-button ${state.vendorTab === tab ? "active" : ""}" data-vendor-tab="${tab}">${vendorTabLabel(tab)}</button>`).join("")}
+          ${["overview", "profile", "activities", "calendar", "bookings", "revenue", "new"].map((tab) => `<button class="tab-button ${state.vendorTab === tab ? "active" : ""}" data-vendor-tab="${tab}">${vendorTabLabel(tab)}</button>`).join("")}
         </nav>
         <div>${vendorPanel(vendor, vendorActivities, bookings)}</div>
       </div>
@@ -1570,6 +1609,7 @@ function vendorTabLabel(tab) {
     calendar: "Takvim",
     bookings: "Rezervasyonlar",
     revenue: "Gelirler",
+    profile: "Firma profili",
     new: "Yeni etkinlik",
   }[tab];
 }
@@ -1595,6 +1635,7 @@ function vendorPanel(vendor, activities, bookings) {
   if (state.vendorTab === "calendar") return calendarPanel(activities);
   if (state.vendorTab === "bookings") return bookingTable(bookings);
   if (state.vendorTab === "revenue") return revenuePanel(bookings);
+  if (state.vendorTab === "profile") return vendorProfileEditPanel(vendor);
   return newActivityForm(vendor);
 }
 
@@ -1710,6 +1751,33 @@ function revenuePanel(bookings) {
         <label><span>Tutar</span><input type="number" placeholder="1500" /></label>
         <label class="wide"><span>Açıklama</span><textarea placeholder="Manuel gider girişi MVP alanı"></textarea></label>
         <button class="ghost-action wide" type="button" data-notify="Gider kaydı demo olarak eklendi.">Gider ekle</button>
+      </form>
+    </div>
+  `;
+}
+
+function vendorProfileEditPanel(vendor) {
+  return `
+    <div class="panel">
+      <div class="panel-heading">
+        <div>
+          <h3>Firma profili</h3>
+          <p class="muted">Bu bilgiler satıcı hesabınızın panelinde ve ileride public firma sayfanızda kullanılır.</p>
+        </div>
+        <span class="vendor-logo-thumb large">${vendor.logoUrl ? `<img src="${vendor.logoUrl}" alt="${vendor.name} logo" />` : userInitials()}</span>
+      </div>
+      <form id="vendorProfileForm" class="form-grid">
+        <input type="hidden" name="vendorId" value="${vendor.id}" />
+        <input type="hidden" name="currentLogoUrl" value="${vendor.logoUrl || ""}" />
+        <label><span>Firma adı</span><input name="name" required value="${vendor.name || ""}" /></label>
+        <label><span>İlçe</span><input name="district" required value="${vendor.district || ""}" /></label>
+        <label class="wide"><span>Adres</span><input name="address" value="${vendor.address || ""}" placeholder="Firma adresi" /></label>
+        <label class="wide"><span>Açıklama</span><textarea name="description" placeholder="Firmanızı kısa anlatın">${vendor.description || ""}</textarea></label>
+        <label class="wide"><span>Yuvarlak logo</span><input name="logo" type="file" accept="image/*" data-preview-target="vendorLogoPreview" /></label>
+        <div class="wide media-grid" id="vendorLogoPreview">
+          ${vendor.logoUrl ? `<div class="media-thumb"><img src="${vendor.logoUrl}" alt="${vendor.name} logo önizleme" /><span>Mevcut logo</span></div>` : ""}
+        </div>
+        <button class="primary-action wide" type="submit">Firma profilini kaydet</button>
       </form>
     </div>
   `;
@@ -1978,6 +2046,49 @@ async function deleteActivity(activityId) {
   }
 
   notify("Etkinlik kaldırıldı.");
+  renderVendor();
+}
+
+async function updateVendorProfile(form) {
+  const data = new FormData(form);
+  const vendorId = String(data.get("vendorId"));
+  const vendor = state.vendors.find((item) => item.id === vendorId);
+  if (!vendor) return;
+
+  const logoFile = form.elements.logo?.files?.[0];
+  let logoUrl = String(data.get("currentLogoUrl") || vendor.logoUrl || "");
+  if (logoFile && !state.supabaseReady) logoUrl = await fileToDataUrl(logoFile);
+  if (logoFile && state.supabaseReady) {
+    try {
+      logoUrl = await uploadActivityImage(logoFile, vendorId);
+    } catch (error) {
+      notify(`Logo yüklenemedi: ${error.message}`);
+    }
+  }
+
+  Object.assign(vendor, {
+    name: String(data.get("name") || "").trim(),
+    district: String(data.get("district") || "").trim(),
+    address: String(data.get("address") || "").trim(),
+    description: String(data.get("description") || "").trim(),
+    logoUrl,
+  });
+
+  if (state.supabaseReady && isUuid(vendorId)) {
+    const { error } = await state.supabaseClient
+      .from("vendors")
+      .update({
+        name: vendor.name,
+        district: vendor.district,
+        address: vendor.address,
+        description: vendor.description,
+        logo_url: logoUrl,
+      })
+      .eq("id", vendorId);
+    if (error) notify(`Firma profili yerelde güncellendi; Supabase kaydı başarısız: ${error.message}`);
+  }
+
+  notify("Firma profili güncellendi.");
   renderVendor();
 }
 
@@ -2297,6 +2408,10 @@ async function handleSignup(form) {
         slug: (vendorName || fullName).toLocaleLowerCase("tr-TR").replaceAll(" ", "-"),
         status: "pending",
         district: "İstanbul",
+        city: "İstanbul",
+        address: "",
+        description: "",
+        logoUrl: "",
         commissionRate: 0.12,
         plan: "FREE",
       });
@@ -2586,6 +2701,7 @@ document.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (event.target.id === "bookingForm") await createBooking(event.target);
   if (event.target.id === "activityForm") await createActivity(event.target);
+  if (event.target.id === "vendorProfileForm") await updateVendorProfile(event.target);
   if (event.target.id === "loginForm") await handleLogin(event.target);
   if (event.target.id === "signupForm") await handleSignup(event.target);
   if (event.target.id === "childForm") await handleChildCreate(event.target);

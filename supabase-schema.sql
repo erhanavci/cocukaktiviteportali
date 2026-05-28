@@ -59,10 +59,13 @@ create table if not exists public.vendors (
   city text not null default 'İstanbul',
   district text not null default 'Belirlenecek',
   address text,
+  logo_url text,
   commission_rate numeric(5, 4) not null default 0.1200,
   plan_code text not null default 'FREE',
   created_at timestamptz not null default now()
 );
+
+alter table public.vendors add column if not exists logo_url text;
 
 create table if not exists public.vendor_users (
   vendor_id uuid not null references public.vendors(id) on delete cascade,
@@ -186,6 +189,39 @@ create table if not exists public.subscription_plans (
   price numeric(12, 2) not null default 0,
   is_active boolean not null default false
 );
+
+create or replace function public.sync_session_reserved_count()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.activity_sessions s
+  set reserved_count = coalesce((
+    select sum(b.participant_count)
+    from public.bookings b
+    where b.session_id = s.id
+      and b.status in ('confirmed', 'pending_payment')
+  ), 0)
+  where s.id = coalesce(new.session_id, old.session_id);
+
+  return coalesce(new, old);
+end;
+$$;
+
+drop trigger if exists sync_booking_session_reserved on public.bookings;
+create trigger sync_booking_session_reserved
+after insert or update or delete on public.bookings
+for each row execute function public.sync_session_reserved_count();
+
+update public.activity_sessions s
+set reserved_count = coalesce((
+  select sum(b.participant_count)
+  from public.bookings b
+  where b.session_id = s.id
+    and b.status in ('confirmed', 'pending_payment')
+), 0);
 
 insert into public.subscription_plans (code, name, price, is_active)
 values
