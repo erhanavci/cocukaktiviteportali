@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Çocuk Aktivite Portalı MVP</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="#home" data-route="home" aria-label="Ana sayfa">
+        <span class="brand-mark">ÇA</span>
+        <span>
+          <strong>Çocuk Aktivite Portalı</strong>
+          <small>İstanbul MVP</small>
+        </span>
+      </a>
+      <nav class="primary-nav" aria-label="Ana navigasyon">
+        <button class="nav-link active" data-route="home">Keşfet</button>
+        <button class="nav-link" data-route="bookings">Rezervasyonlarım</button>
+        <button class="nav-link" data-route="vendor">Satıcı Paneli</button>
+        <button class="nav-link" data-route="admin">Admin</button>
+        <button class="nav-link" data-route="pricing">Planlar</button>
+        <button class="nav-link" data-route="auth" id="authNav">Giriş</button>
+      </nav>
+      <button class="mobile-menu" id="mobileMenu" aria-label="Menüyü aç">☰</button>
+    </header>
+
+    <main id="app"></main>
+
+    <aside class="toast" id="toast" aria-live="polite"></aside>
+
+    <template id="homeTemplate">
+      <section class="hero">
+        <img src="assets/hero-workshop.png" alt="Çocukların atölye etkinliği yaptığı sıcak bir ortam" />
+        <div class="hero-overlay">
+          <p class="eyebrow">Free + satış başı komisyon modeli</p>
+          <h1>Çocuğunuz için güvenilir etkinliği bulun, seansı seçin, yerinizi ayırın.</h1>
+          <p class="hero-copy">
+            İstanbul odaklı ilk MVP: oyun grubu, sanat atölyesi, müze/gezi ve STEM etkinlikleri.
+          </p>
+          <div class="hero-actions">
+            <button class="primary-action" data-scroll="results">Etkinlik ara</button>
+            <button class="secondary-action" data-route="vendor">Satıcı panelini gör</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="quick-stats" aria-label="MVP özeti">
+        <article><strong data-stat="activityCount">0</strong><span>yayındaki etkinlik</span></article>
+        <article><strong data-stat="sessionCount">0</strong><span>aktif seans</span></article>
+        <article><strong>%12</strong><span>Free plan komisyonu</span></article>
+        <article><strong>24s</strong><span>varsayılan ücretsiz iptal</span></article>
+      </section>
+
+      <section class="section-shell" id="results">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Marketplace</p>
+            <h2>Etkinlikleri keşfet</h2>
+          </div>
+          <button class="ghost-action" id="resetFilters">Filtreleri temizle</button>
+        </div>
+        <form class="filters" id="filters">
+          <label>
+            Arama
+            <input name="query" type="search" placeholder="Sanat, STEM, müze..." />
+          </label>
+          <label>
+            Kategori
+            <select name="category"></select>
+          </label>
+          <label>
+            Yaş
+            <select name="age"></select>
+          </label>
+          <label>
+            İlçe
+            <select name="district"></select>
+          </label>
+          <label>
+            Etkinlik tipi
+            <select name="type"></select>
+          </label>
+          <label>
+            Maks. fiyat
+            <input name="maxPrice" type="range" min="250" max="2500" step="50" value="2500" />
+            <span class="range-value" id="maxPriceLabel">₺2500</span>
+          </label>
+        </form>
+        <div class="activity-grid" id="activityGrid"></div>
+      </section>
+    </template>
+  </body>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</html>
