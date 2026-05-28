@@ -77,11 +77,19 @@ create table if not exists public.activities (
   max_age int not null check (max_age <= 18 and max_age >= min_age),
   activity_type text not null,
   district text not null,
+  address text,
+  lat numeric(10, 7),
+  lng numeric(10, 7),
   status public.record_status not null default 'pending',
   cancellation_policy text not null default 'Etkinlikten 24 saat öncesine kadar ücretsiz iptal.',
   image_url text,
   created_at timestamptz not null default now()
 );
+
+alter table public.activities add column if not exists address text;
+alter table public.activities add column if not exists lat numeric(10, 7);
+alter table public.activities add column if not exists lng numeric(10, 7);
+alter table public.activities add column if not exists image_url text;
 
 create table if not exists public.activity_sessions (
   id uuid primary key default gen_random_uuid(),
@@ -281,6 +289,12 @@ for insert with check (public.is_admin() or exists (
 drop policy if exists "activities vendor update" on public.activities;
 create policy "activities vendor update" on public.activities
 for update using (public.is_admin() or exists (
+  select 1 from public.vendor_users vu where vu.vendor_id = activities.vendor_id and vu.user_id = auth.uid()
+));
+
+drop policy if exists "activities vendor delete" on public.activities;
+create policy "activities vendor delete" on public.activities
+for delete using (public.is_admin() or exists (
   select 1 from public.vendor_users vu where vu.vendor_id = activities.vendor_id and vu.user_id = auth.uid()
 ));
 

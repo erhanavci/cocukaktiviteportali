@@ -10,6 +10,7 @@ const state = {
   authMode: "choice",
   signupRole: "parent",
   editingChildId: null,
+  editingActivityId: null,
   supabaseClient: null,
   supabaseReady: false,
   supabaseConfigError: "",
@@ -54,9 +55,13 @@ const state = {
       minAge: 5,
       maxAge: 9,
       district: "Kadıköy",
+      address: "Caferağa Mahallesi, Moda Caddesi No:12",
+      lat: 40.9875,
+      lng: 29.0273,
       price: 650,
       status: "approved",
       visual: "linear-gradient(135deg, #0f766e, #e85d45 55%, #d99b22)",
+      imageUrl: "",
       description:
         "Çocuklar kendi seramik kaselerini tasarlar, renk karışımlarını öğrenir ve güvenli atölye ekipmanlarıyla çalışır.",
       cancellation: "Etkinlikten 24 saat öncesine kadar ücretsiz iptal.",
@@ -75,9 +80,13 @@ const state = {
       minAge: 7,
       maxAge: 12,
       district: "Beşiktaş",
+      address: "Levent Mahallesi, Çocuk Bilim Merkezi",
+      lat: 41.0812,
+      lng: 29.0111,
       price: 900,
       status: "approved",
       visual: "linear-gradient(135deg, #2563eb, #0f766e 52%, #f5c451)",
+      imageUrl: "",
       description:
         "Algoritma mantığı, sensörler ve takım çalışmasıyla çocukların problem çözme kaslarını güçlendiren uygulamalı program.",
       cancellation: "İlk ders başlamadan 24 saat öncesine kadar ücretsiz iptal.",
@@ -96,9 +105,13 @@ const state = {
       minAge: 1,
       maxAge: 3,
       district: "Kadıköy",
+      address: "Göztepe Parkı yanı oyun alanı",
+      lat: 40.9761,
+      lng: 29.0588,
       price: 420,
       status: "approved",
       visual: "linear-gradient(135deg, #f97316, #0ea5e9 55%, #84cc16)",
+      imageUrl: "",
       description:
         "Duyusal oyun, ritim ve güvenli serbest hareket alanıyla 0-3 yaş dönemine uygun ebeveynli buluşma.",
       cancellation: "Etkinlikten 24 saat öncesine kadar ücretsiz iptal.",
@@ -116,9 +129,13 @@ const state = {
       minAge: 6,
       maxAge: 10,
       district: "Beyoğlu",
+      address: "Meşrutiyet Caddesi, Beyoğlu",
+      lat: 41.0316,
+      lng: 28.9744,
       price: 780,
       status: "pending",
       visual: "linear-gradient(135deg, #7c3aed, #e85d45 58%, #facc15)",
+      imageUrl: "",
       description:
         "Müze anlatımı, eskiz defteri ve mini yaratıcı görevlerle çocuklara sanat tarihini deneyimleten gezi.",
       cancellation: "Satıcı ve admin onaylı iptal/iade süreci uygulanır.",
@@ -283,9 +300,13 @@ async function loadMarketplaceData() {
       minAge: activity.min_age,
       maxAge: activity.max_age,
       district: activity.district,
+      address: activity.address ?? activity.location_address ?? "",
+      lat: activity.lat == null ? null : Number(activity.lat),
+      lng: activity.lng == null ? null : Number(activity.lng),
       price: Number(activity.sessions?.[0]?.price ?? 0),
       status: activity.status,
       visual: visualForIndex(index),
+      imageUrl: activity.image_url ?? "",
       description: activity.description,
       cancellation: activity.cancellation_policy,
       parentParticipation: "Satıcı bilgisinde belirtilecek.",
@@ -313,6 +334,50 @@ const dateTime = (iso) =>
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(iso));
+
+const dateOnly = (iso) => {
+  if (!iso) return "";
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
+};
+
+const timeOnly = (iso) => {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+};
+
+const durationMinutes = (start, end) => Math.max(30, Math.round((new Date(end) - new Date(start)) / 60000) || 120);
+
+function localDateTimeFromDuration(date, startTime, minutes) {
+  const start = new Date(`${date}T${startTime}:00`);
+  const end = new Date(start.getTime() + Number(minutes || 120) * 60000);
+  return `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, "0")}-${String(end.getDate()).padStart(2, "0")}T${String(end.getHours()).padStart(2, "0")}:${String(end.getMinutes()).padStart(2, "0")}:00`;
+}
+
+function mapEmbedUrl(activity) {
+  const lat = Number(activity.lat);
+  const lng = Number(activity.lng);
+  if (Number.isFinite(lat) && Number.isFinite(lng)) {
+    const delta = 0.006;
+    return `https://www.openstreetmap.org/export/embed.html?bbox=${lng - delta}%2C${lat - delta}%2C${lng + delta}%2C${lat + delta}&layer=mapnik&marker=${lat}%2C${lng}`;
+  }
+  return `https://www.openstreetmap.org/export/embed.html?bbox=28.80%2C40.85%2C29.20%2C41.15&layer=mapnik`;
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    if (!file) {
+      resolve("");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
 
 function getVendor(id) {
   return state.vendors.find((vendor) => vendor.id === id);
@@ -671,13 +736,14 @@ function renderActivityGrid(activities) {
       const remaining = activity.sessions.reduce((sum, session) => sum + (session.capacity - session.reserved), 0);
       return `
         <article class="activity-card">
-          <div class="activity-visual" style="--visual:${activity.visual}">
+          <div class="activity-visual" style="${activity.imageUrl ? `--image:url('${activity.imageUrl}')` : `--visual:${activity.visual}`}">
             <strong>${activity.category}</strong>
           </div>
           <div class="activity-body">
             <div class="tag-row">
               <span class="tag">${activity.minAge}-${activity.maxAge} yaş</span>
               <span class="tag">${activity.district}</span>
+              ${activity.address ? `<span class="tag">Konumlu</span>` : ""}
               <span class="tag">${remaining} kontenjan</span>
             </div>
             <h3>${activity.title}</h3>
@@ -713,13 +779,18 @@ function renderDetail() {
       </div>
       <div class="detail-layout">
         <article class="panel">
-          <div class="detail-cover" style="--visual:${activity.visual}"></div>
+          <div class="detail-cover" style="${activity.imageUrl ? `--image:url('${activity.imageUrl}')` : `--visual:${activity.visual}`}"></div>
           <h3>Etkinlik bilgileri</h3>
           <p>${activity.description}</p>
           <div class="tag-row">
             <span class="tag">${activity.type}</span>
+            ${activity.address ? `<span class="tag">${activity.address}</span>` : ""}
             <span class="tag">${activity.parentParticipation}</span>
             <span class="tag">${activity.cancellation}</span>
+          </div>
+          <h3>Konum</h3>
+          <div class="map-frame">
+            <iframe title="${activity.title} konumu" src="${mapEmbedUrl(activity)}" loading="lazy"></iframe>
           </div>
           <h3>Seanslar</h3>
           <div class="sessions">
@@ -963,11 +1034,29 @@ function vendorPanel(vendor, activities, bookings) {
 function activityTable(activities) {
   return `
     <div class="panel">
-      <h3>Etkinliklerim</h3>
+      <div class="panel-heading">
+        <h3>Etkinliklerim</h3>
+        <button class="primary-action" data-new-activity>Yeni etkinlik</button>
+      </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Etkinlik</th><th>Kategori</th><th>Yaş</th><th>Seans</th><th>Durum</th></tr></thead>
-          <tbody>${activities.map((activity) => `<tr><td>${activity.title}</td><td>${activity.category}</td><td>${activity.minAge}-${activity.maxAge}</td><td>${activity.sessions.length}</td><td>${statusPill(activity.status)}</td></tr>`).join("")}</tbody>
+          <thead><tr><th>Etkinlik</th><th>Kategori</th><th>Yer</th><th>Seans</th><th>Durum</th><th>Aksiyon</th></tr></thead>
+          <tbody>${activities.map((activity) => {
+            const firstSession = activity.sessions[0];
+            return `<tr>
+              <td>${activity.title}<br><span class="muted">${activity.minAge}-${activity.maxAge} yaş</span></td>
+              <td>${activity.category}</td>
+              <td>${activity.district}<br><span class="muted">${activity.address || "Adres yok"}</span></td>
+              <td>${firstSession ? `${dateTime(firstSession.start)}<br><span class="muted">${durationMinutes(firstSession.start, firstSession.end)} dk</span>` : "Seans yok"}</td>
+              <td>${statusPill(activity.status)}</td>
+              <td>
+                <div class="button-row">
+                  <button class="ghost-action" data-edit-activity="${activity.id}">Düzenle</button>
+                  <button class="ghost-action danger-action" data-delete-activity="${activity.id}">Kaldır</button>
+                </div>
+              </td>
+            </tr>`;
+          }).join("")}</tbody>
         </table>
       </div>
     </div>
@@ -1046,18 +1135,46 @@ function revenuePanel(bookings) {
 }
 
 function newActivityForm(vendor) {
+  const editingActivity = state.activities.find((activity) => activity.id === state.editingActivityId);
+  const session = editingActivity?.sessions?.[0];
+  const startDate = dateOnly(session?.start) || "2026-06-10";
+  const startTime = timeOnly(session?.start) || "13:00";
+  const endTime = timeOnly(session?.end) || "15:00";
+  const duration = session ? durationMinutes(session.start, session.end) : 120;
+
   return `
     <div class="panel">
-      <h3>Hızlı etkinlik oluştur</h3>
+      <div class="panel-heading">
+        <div>
+          <h3>${editingActivity ? "Etkinliği düzenle" : "Etkinlik oluştur"}</h3>
+          <p class="muted">Yer, zaman, süre, konum ve fotoğraf bilgileri public detay sayfasında görünür.</p>
+        </div>
+        ${editingActivity ? `<button class="ghost-action" data-cancel-activity-edit>Düzenlemeyi iptal et</button>` : ""}
+      </div>
       <form id="activityForm" class="form-grid">
-        <label><span>Başlık</span><input name="title" required placeholder="Yaratıcı drama atölyesi" /></label>
-        <label><span>Kategori</span><select name="category">${["Oyun grubu", "Sanat atölyesi", "Spor", "Müzik", "Dans", "Drama", "Müze/gezi", "Bilim/STEM", "Doğa"].map((item) => `<option>${item}</option>`).join("")}</select></label>
-        <label><span>Min yaş</span><input name="minAge" type="number" min="0" max="12" value="5" /></label>
-        <label><span>Max yaş</span><input name="maxAge" type="number" min="0" max="12" value="8" /></label>
-        <label><span>İlçe</span><input name="district" value="${vendor.district}" /></label>
-        <label><span>Fiyat</span><input name="price" type="number" value="600" /></label>
-        <label class="wide"><span>Açıklama</span><textarea name="description" required></textarea></label>
-        <button class="primary-action wide" type="submit">Pending etkinlik oluştur</button>
+        <input type="hidden" name="activityId" value="${editingActivity?.id ?? ""}" />
+        <input type="hidden" name="currentImageUrl" value="${editingActivity?.imageUrl ?? ""}" />
+        <label><span>Başlık</span><input name="title" required placeholder="Yaratıcı drama atölyesi" value="${editingActivity?.title ?? ""}" /></label>
+        <label><span>Kategori</span><select name="category">${["Oyun grubu", "Sanat atölyesi", "Spor", "Müzik", "Dans", "Drama", "Müze/gezi", "Bilim/STEM", "Doğa"].map((item) => `<option ${editingActivity?.category === item ? "selected" : ""}>${item}</option>`).join("")}</select></label>
+        <label><span>Min yaş</span><input name="minAge" type="number" min="0" max="12" value="${editingActivity?.minAge ?? 5}" /></label>
+        <label><span>Max yaş</span><input name="maxAge" type="number" min="0" max="12" value="${editingActivity?.maxAge ?? 8}" /></label>
+        <label><span>İlçe</span><input name="district" value="${editingActivity?.district ?? vendor.district}" /></label>
+        <label><span>Adres / mekan</span><input name="address" required value="${editingActivity?.address ?? ""}" placeholder="Atölye adı, açık adres" /></label>
+        <label><span>Enlem</span><input name="lat" type="number" step="0.000001" value="${editingActivity?.lat ?? ""}" placeholder="41.0082" /></label>
+        <label><span>Boylam</span><input name="lng" type="number" step="0.000001" value="${editingActivity?.lng ?? ""}" placeholder="28.9784" /></label>
+        <label><span>Tarih</span><input name="date" type="date" value="${startDate}" required /></label>
+        <label><span>Başlangıç saati</span><input name="startTime" type="time" value="${startTime}" required /></label>
+        <label><span>Bitiş saati</span><input name="endTime" type="time" value="${endTime}" /></label>
+        <label><span>Toplam süre (dk)</span><input name="duration" type="number" min="30" step="15" value="${duration}" required /></label>
+        <label><span>Kontenjan</span><input name="capacity" type="number" min="1" value="${session?.capacity ?? 10}" /></label>
+        <label><span>Fiyat</span><input name="price" type="number" value="${editingActivity?.price ?? 600}" /></label>
+        <label class="wide"><span>Etkinlik fotoğrafı</span><input name="image" type="file" accept="image/*" /></label>
+        ${editingActivity?.imageUrl ? `<div class="wide image-preview"><img src="${editingActivity.imageUrl}" alt="${editingActivity.title} fotoğrafı" /></div>` : ""}
+        <label class="wide"><span>Açıklama</span><textarea name="description" required>${editingActivity?.description ?? ""}</textarea></label>
+        <div class="wide map-frame compact-map">
+          <iframe title="Etkinlik konum önizlemesi" src="${mapEmbedUrl(editingActivity ?? { lat: 41.0082, lng: 28.9784 })}" loading="lazy"></iframe>
+        </div>
+        <button class="primary-action wide" type="submit">${editingActivity ? "Etkinliği güncelle" : "Pending etkinlik oluştur"}</button>
       </form>
     </div>
   `;
@@ -1075,24 +1192,56 @@ function slugify(value) {
 
 async function createActivity(form) {
   const data = new FormData(form);
+  const activityId = String(data.get("activityId") || "");
+  const existingActivity = state.activities.find((activity) => activity.id === activityId);
+  const imageFile = form.elements.image?.files?.[0];
+  const imageUrl = imageFile ? await fileToDataUrl(imageFile) : String(data.get("currentImageUrl") || "");
+  const date = String(data.get("date"));
+  const startTime = String(data.get("startTime"));
+  const endTime = String(data.get("endTime"));
+  const duration = Number(data.get("duration") || 120);
+  const startAt = `${date}T${startTime}:00`;
+  const endAt = endTime ? `${date}T${endTime}:00` : localDateTimeFromDuration(date, startTime, duration);
+  const capacity = Number(data.get("capacity") || 10);
+  const lat = data.get("lat") === "" ? null : Number(data.get("lat"));
+  const lng = data.get("lng") === "" ? null : Number(data.get("lng"));
   const activity = {
-    id: `act-${Date.now()}`,
-    vendorId: "ven-1",
+    id: activityId || `act-${Date.now()}`,
+    vendorId: existingActivity?.vendorId ?? "ven-1",
     title: data.get("title"),
     category: data.get("category"),
     type: "Tek seans",
     minAge: Number(data.get("minAge")),
     maxAge: Number(data.get("maxAge")),
     district: data.get("district"),
+    address: data.get("address"),
+    lat,
+    lng,
     price: Number(data.get("price")),
     status: "pending",
-    visual: "linear-gradient(135deg, #0f766e, #2563eb 55%, #e85d45)",
+    visual: existingActivity?.visual ?? "linear-gradient(135deg, #0f766e, #2563eb 55%, #e85d45)",
+    imageUrl,
     description: data.get("description"),
     cancellation: "Etkinlikten 24 saat öncesine kadar ücretsiz iptal.",
     parentParticipation: "Satıcı tarafından belirlenecek.",
-    sessions: [{ id: `ses-${Date.now()}`, start: "2026-06-10T13:00:00", end: "2026-06-10T15:00:00", capacity: 10, reserved: 0, price: Number(data.get("price")), status: "active" }],
+    sessions: [
+      {
+        id: existingActivity?.sessions?.[0]?.id ?? `ses-${Date.now()}`,
+        start: startAt,
+        end: endAt,
+        capacity,
+        reserved: existingActivity?.sessions?.[0]?.reserved ?? 0,
+        price: Number(data.get("price")),
+        status: "active",
+      },
+    ],
   };
-  state.activities.unshift(activity);
+
+  if (activityId) {
+    state.activities = state.activities.map((item) => (item.id === activityId ? activity : item));
+  } else {
+    state.activities.unshift(activity);
+  }
 
   if (state.supabaseReady && state.currentUser) {
     const { data: vendorLink } = await state.supabaseClient
@@ -1109,33 +1258,45 @@ async function createActivity(form) {
       .maybeSingle();
 
     if (vendorId) {
-      const { data: dbActivity, error } = await state.supabaseClient
-        .from("activities")
-        .insert({
-          vendor_id: vendorId,
-          category_id: category?.id ?? null,
-          title: data.get("title"),
-          slug: `${slugify(data.get("title"))}-${Date.now()}`,
-          description: data.get("description"),
-          min_age: Number(data.get("minAge")),
-          max_age: Number(data.get("maxAge")),
-          activity_type: "Tek seans",
-          district: data.get("district"),
-          status: "pending",
-        })
-        .select()
-        .single();
+      const activityPayload = {
+        vendor_id: vendorId,
+        category_id: category?.id ?? null,
+        title: data.get("title"),
+        slug: `${slugify(data.get("title"))}-${Date.now()}`,
+        description: data.get("description"),
+        min_age: Number(data.get("minAge")),
+        max_age: Number(data.get("maxAge")),
+        activity_type: "Tek seans",
+        district: data.get("district"),
+        address: data.get("address"),
+        lat,
+        lng,
+        image_url: imageUrl,
+        status: "pending",
+      };
+
+      const activityRequest =
+        activityId && !String(activityId).startsWith("act-")
+          ? state.supabaseClient.from("activities").update(activityPayload).eq("id", activityId).select().single()
+          : state.supabaseClient.from("activities").insert(activityPayload).select().single();
+
+      const { data: dbActivity, error } = await activityRequest;
 
       if (!error && dbActivity) {
-        await state.supabaseClient.from("activity_sessions").insert({
+        const sessionPayload = {
           activity_id: dbActivity.id,
-          start_at: "2026-06-10T13:00:00+03:00",
-          end_at: "2026-06-10T15:00:00+03:00",
-          capacity: 10,
-          reserved_count: 0,
+          start_at: `${startAt}+03:00`,
+          end_at: `${endAt}+03:00`,
+          capacity,
           price: Number(data.get("price")),
           status: "active",
-        });
+        };
+        const existingSessionId = existingActivity?.sessions?.[0]?.id;
+        if (activityId && existingSessionId && !String(existingSessionId).startsWith("ses-")) {
+          await state.supabaseClient.from("activity_sessions").update(sessionPayload).eq("id", existingSessionId);
+        } else {
+          await state.supabaseClient.from("activity_sessions").insert({ ...sessionPayload, reserved_count: 0 });
+        }
       }
 
       if (error) notify(`Yerel etkinlik oluştu; Supabase kaydı başarısız: ${error.message}`);
@@ -1144,7 +1305,24 @@ async function createActivity(form) {
   }
 
   state.vendorTab = "activities";
-  notify("Etkinlik pending durumunda oluşturuldu; admin onayı bekliyor.");
+  state.editingActivityId = null;
+  notify(activityId ? "Etkinlik güncellendi ve tekrar admin onayına alındı." : "Etkinlik pending durumunda oluşturuldu; admin onayı bekliyor.");
+  renderVendor();
+}
+
+async function deleteActivity(activityId) {
+  const activity = state.activities.find((item) => item.id === activityId);
+  if (!activity) return;
+
+  state.activities = state.activities.filter((item) => item.id !== activityId);
+  if (state.editingActivityId === activityId) state.editingActivityId = null;
+
+  if (state.supabaseReady && !String(activityId).startsWith("act-")) {
+    const { error } = await state.supabaseClient.from("activities").delete().eq("id", activityId);
+    if (error) notify(`Yerel olarak kaldırıldı; Supabase silme başarısız: ${error.message}`);
+  }
+
+  notify("Etkinlik kaldırıldı.");
   renderVendor();
 }
 
@@ -1473,6 +1651,21 @@ document.addEventListener("click", (event) => {
   }
   if (target.dataset.vendorTab) {
     state.vendorTab = target.dataset.vendorTab;
+    renderVendor();
+  }
+  if (target.hasAttribute("data-new-activity")) {
+    state.editingActivityId = null;
+    state.vendorTab = "new";
+    renderVendor();
+  }
+  if (target.dataset.editActivity) {
+    state.editingActivityId = target.dataset.editActivity;
+    state.vendorTab = "new";
+    renderVendor();
+  }
+  if (target.dataset.deleteActivity) deleteActivity(target.dataset.deleteActivity);
+  if (target.hasAttribute("data-cancel-activity-edit")) {
+    state.editingActivityId = null;
     renderVendor();
   }
   if (target.dataset.adminTab) {
