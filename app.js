@@ -8,6 +8,11 @@ const state = {
   currentUser: null,
   authProfile: null,
   vendorIds: [],
+  adminPermissions: ["all"],
+  notifications: [],
+  supportTickets: [],
+  categories: ["Oyun grubu", "Sanat atölyesi", "Spor", "Müzik", "Dans", "Drama", "Müze/gezi", "Bilim/STEM", "Doğa", "Ebeveyn-çocuk", "Tatil kampı", "Düzenli kurs"],
+  adminAvatar: "",
   authMode: "choice",
   signupRole: "parent",
   editingChildId: null,
@@ -265,7 +270,7 @@ function isVendor() {
 }
 
 function isParent() {
-  return state.authProfile?.role === "parent" || isAdmin();
+  return state.authProfile?.role === "parent";
 }
 
 function profileLabel() {
@@ -273,6 +278,20 @@ function profileLabel() {
   if (isAdmin()) return "Admin";
   if (isVendor()) return "Satıcı";
   return "Profil";
+}
+
+function userInitials() {
+  const source = state.authProfile?.full_name || state.currentUser?.email || "?";
+  return source
+    .split(/[ @.]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("");
+}
+
+function unreadCount() {
+  return state.notifications.filter((item) => !item.read).length;
 }
 
 function currentVendor() {
@@ -497,9 +516,62 @@ function renderAccessGate(title, message, cta = "Giriş yap") {
   `;
 }
 
+function renderFavorites() {
+  if (!isParent()) {
+    renderAccessGate("Ebeveyn hesabı gerekli", "Favoriler alanı ebeveyn hesabıyla görüntülenir.");
+    return;
+  }
+  const favorites = [...state.favorites].map((id) => state.activities.find((activity) => activity.id === id)).filter(Boolean);
+  app.innerHTML = `
+    <section class="section-shell">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Ebeveyn hesabı</p>
+          <h2>Favoriler</h2>
+        </div>
+      </div>
+      <div class="activity-grid">${favorites.length ? favorites.map((activity) => `
+        <article class="activity-card">
+          <div class="activity-visual" style="${activity.imageUrl ? `--image:url('${activity.imageUrl}')` : `--visual:${activity.visual}`}"><strong>${activity.category}</strong></div>
+          <div class="activity-body"><h3>${activity.title}</h3><p class="muted">${remainingLabel(activity)}</p><button class="primary-action" data-detail="${activity.id}">Detay</button></div>
+        </article>`).join("") : `<div class="empty-state">Favori listeniz boş.</div>`}</div>
+    </section>
+  `;
+}
+
+function renderSupport() {
+  if (!state.currentUser) {
+    renderAccessGate("Giriş gerekli", "Destek talebi oluşturmak için giriş yapın.");
+    return;
+  }
+  app.innerHTML = `
+    <section class="section-shell">
+      <div class="panel auth-panel">
+        <p class="eyebrow">Destek</p>
+        <h2>Destek talebi oluştur</h2>
+        <form id="supportForm" class="form-grid">
+          <label><span>Konu</span><input name="subject" required placeholder="Rezervasyon / etkinlik / ödeme" /></label>
+          <label><span>Tip</span><select name="type"><option>Destek</option><option>Şikayet</option><option>İade</option></select></label>
+          <label class="wide"><span>Mesaj</span><textarea name="message" required></textarea></label>
+          <button class="primary-action wide" type="submit">Talep gönder</button>
+        </form>
+      </div>
+    </section>
+  `;
+}
+
 function updateNav() {
   const authButton = document.querySelector("#authNav");
-  if (authButton) authButton.textContent = profileLabel();
+  const bookingsButton = document.querySelector('[data-route="bookings"]');
+  const vendorButton = document.querySelector('[data-route="vendor"]');
+  if (bookingsButton) bookingsButton.hidden = !isParent();
+  if (vendorButton) vendorButton.hidden = !isVendor();
+  if (authButton) {
+    authButton.innerHTML = state.currentUser
+      ? `<span class="nav-avatar">${state.adminAvatar && isAdmin() ? `<img src="${state.adminAvatar}" alt="Admin avatar" />` : userInitials()}</span><span>${profileLabel()}</span><span class="bell">🔔${unreadCount() ? `<b>${unreadCount()}</b>` : ""}</span>`
+      : "Giriş";
+    authButton.dataset.route = isAdmin() ? "admin" : "auth";
+  }
 
   document.querySelectorAll(".nav-link").forEach((button) => {
     button.classList.toggle("active", button.dataset.route === state.route);
@@ -536,6 +608,8 @@ function render() {
   if (state.route === "bookings") renderBookings();
   if (state.route === "vendor") renderVendor();
   if (state.route === "admin") renderAdmin();
+  if (state.route === "favorites") renderFavorites();
+  if (state.route === "support") renderSupport();
   if (state.route === "pricing") renderPricing();
 }
 
@@ -571,8 +645,8 @@ function renderAuth() {
             <h3>Panel kısayolları</h3>
             <div class="sessions">
               ${isParent() ? `<button class="ghost-action" data-route="bookings">Rezervasyonlarım</button>` : ""}
-              ${isVendor() || isAdmin() ? `<button class="ghost-action" data-route="vendor">Satıcı paneli</button>` : ""}
-              ${isAdmin() ? `<button class="primary-action" data-route="admin">Admin panel</button>` : ""}
+              ${isParent() ? `<button class="ghost-action" data-route="favorites">Favoriler</button>` : ""}
+              ${isVendor() ? `<button class="ghost-action" data-route="vendor">Satıcı paneli</button>` : ""}
             </div>
           </aside>
         </div>
@@ -824,7 +898,7 @@ function renderActivityGrid(activities) {
             <div class="card-footer">
               <span class="price">${money(activity.price)}</span>
               <div class="button-row">
-                <button class="icon-button ${state.favorites.has(activity.id) ? "active" : ""}" data-favorite="${activity.id}" title="Favori">♥</button>
+                ${isParent() ? `<button class="icon-button ${state.favorites.has(activity.id) ? "active" : ""}" data-favorite="${activity.id}" title="Favori">♥</button>` : ""}
                 <button class="primary-action" data-detail="${activity.id}">Detay</button>
               </div>
             </div>
@@ -895,7 +969,7 @@ function renderDetail() {
               .join("")}
           </div>
         </article>
-        <aside class="panel">
+        ${isVendor() || isAdmin() ? "" : `<aside class="panel">
           <p class="eyebrow">Rezervasyon</p>
           <h3>Çocuk ve ödeme bilgisi</h3>
           <form id="bookingForm" class="form-grid">
@@ -919,7 +993,7 @@ function renderDetail() {
             <button class="primary-action wide" type="submit">Rezervasyon oluştur</button>
           </form>
           <p class="muted">Başarılı online ödeme confirmed rezervasyon üretir; komisyon kaydı otomatik hesaplanır.</p>
-        </aside>
+        </aside>`}
       </div>
     </section>
   `;
@@ -1538,7 +1612,13 @@ function renderAdmin() {
           <p class="eyebrow">Admin panel</p>
           <h2>Onaylar, ödemeler ve komisyonlar</h2>
         </div>
-        <span class="tag">PaymentProvider: DummyPOS</span>
+        <div class="button-row">
+          <label class="avatar-upload">
+            ${state.adminAvatar ? `<img src="${state.adminAvatar}" alt="Admin avatar" />` : `<span>${userInitials()}</span>`}
+            <input type="file" accept="image/*" data-admin-avatar />
+          </label>
+          <span class="tag">PaymentProvider: DummyPOS</span>
+        </div>
       </div>
       <div class="dashboard-layout">
         <nav class="side-tabs">
@@ -1570,19 +1650,32 @@ function adminPanel() {
   if (state.adminTab === "payments") return adminPaymentTable();
   if (state.adminTab === "commissions") return adminCommissionTable();
   if (state.adminTab === "categories") {
-    return `<div class="panel"><h3>Kategori yönetimi</h3><div class="tag-row">${["Oyun grubu", "Sanat atölyesi", "Spor", "Müzik", "Dans", "Drama", "Müze/gezi", "Bilim/STEM", "Doğa", "Ebeveyn-çocuk", "Tatil kampı", "Düzenli kurs"].map((item) => `<span class="tag">${item}</span>`).join("")}</div></div>`;
+    return `<div class="panel">
+      <h3>Kategori yönetimi</h3>
+      <form id="categoryForm" class="form-grid">
+        <label><span>Kategori adı</span><input name="name" required placeholder="Yeni kategori" /></label>
+        <button class="primary-action" type="submit">Kategori ekle</button>
+      </form>
+      <div class="sessions">${state.categories.map((item) => `<div class="mini-card child-card"><strong>${item}</strong><div class="button-row"><button class="ghost-action" data-edit-category="${item}">Düzenle</button><button class="ghost-action danger-action" data-delete-category="${item}">Sil</button></div></div>`).join("")}</div>
+    </div>`;
   }
-  return `<div class="panel"><h3>Destek ve şikayetler</h3><div class="empty-state">Satıcı, etkinlik ve rezervasyon şikayetleri bu kuyrukta izlenecek.</div></div>`;
+  return `<div class="panel"><h3>Destek ve şikayetler</h3><div class="sessions">${state.supportTickets.length ? state.supportTickets.map((ticket) => `<div class="mini-card"><strong>${ticket.subject}</strong><p class="muted">${ticket.role} · ${ticket.email}</p><p>${ticket.message}</p>${statusPill(ticket.status)}</div>`).join("") : `<div class="empty-state">Henüz destek talebi yok.</div>`}</div></div>`;
 }
 
 function adminPaymentTable() {
+  const rows = state.bookings.map((booking) => {
+    const found = getSession(booking.sessionId);
+    const activity = found?.activity;
+    const vendor = activity ? getVendor(activity.vendorId) : null;
+    return { booking, activity, vendor };
+  });
   return `
     <div class="panel">
-      <h3>Ödeme kayıtları</h3>
+      <h3>Satılan etkinlikler</h3>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Rezervasyon</th><th>Provider</th><th>Tutar</th><th>Durum</th><th>Aksiyon</th></tr></thead>
-          <tbody>${state.bookings.map((booking) => `<tr><td>${booking.id}</td><td>${booking.paymentProvider}</td><td>${money(booking.totalAmount)}</td><td>${statusPill(booking.status)}</td><td><button class="ghost-action" data-refund="${booking.id}">İade başlat</button></td></tr>`).join("") || `<tr><td colspan="5">Ödeme kaydı yok.</td></tr>`}</tbody>
+          <thead><tr><th>Etkinlik</th><th>Firma</th><th>Provider</th><th>Tutar</th><th>Durum</th><th>Aksiyon</th></tr></thead>
+          <tbody>${rows.map(({ booking, activity, vendor }) => `<tr><td>${activity?.title ?? booking.id}</td><td>${vendor?.name ?? "-"}</td><td>${booking.paymentProvider}</td><td>${money(booking.totalAmount)}</td><td>${statusPill(booking.status)}</td><td><button class="ghost-action" data-refund="${booking.id}">İade başlat</button></td></tr>`).join("") || `<tr><td colspan="6">Satış kaydı yok.</td></tr>`}</tbody>
         </table>
       </div>
     </div>
@@ -1649,6 +1742,28 @@ function formatSupabaseError(error) {
     return "Supabase URL yanlış görünüyor. Vercel SUPABASE_URL değeri sadece https://PROJECT_ID.supabase.co olmalı.";
   }
   return message;
+}
+
+async function approveVendor(id) {
+  const vendor = state.vendors.find((item) => item.id === id);
+  if (vendor) vendor.status = "approved";
+  if (state.supabaseReady && !String(id).startsWith("ven-")) {
+    await state.supabaseClient.from("vendors").update({ status: "approved" }).eq("id", id);
+  }
+  state.notifications.unshift({ text: "Firma onaylandı.", read: false });
+  notify("Firma onaylandı ve public yayına hazır.");
+  renderAdmin();
+}
+
+async function approveActivity(id) {
+  const activity = state.activities.find((item) => item.id === id);
+  if (activity) activity.status = "approved";
+  if (state.supabaseReady && !String(id).startsWith("act-")) {
+    await state.supabaseClient.from("activities").update({ status: "approved" }).eq("id", id);
+  }
+  state.notifications.unshift({ text: "Etkinlik onaylandı.", read: false });
+  notify("Etkinlik onaylandı ve public listelerde görünecek.");
+  renderAdmin();
 }
 
 async function handleLogin(form) {
@@ -1767,6 +1882,7 @@ async function handleLogout() {
   state.editingChildId = null;
   notify("Çıkış yapıldı.");
   setRoute("home");
+  render();
 }
 
 async function handleChildCreate(form) {
@@ -1883,14 +1999,10 @@ document.addEventListener("click", (event) => {
     renderAdmin();
   }
   if (target.dataset.approveVendor) {
-    state.vendors.find((vendor) => vendor.id === target.dataset.approveVendor).status = "approved";
-    notify("Firma onaylandı ve public yayına hazır.");
-    renderAdmin();
+    approveVendor(target.dataset.approveVendor);
   }
   if (target.dataset.approveActivity) {
-    state.activities.find((activity) => activity.id === target.dataset.approveActivity).status = "approved";
-    notify("Etkinlik onaylandı ve public listelerde görünecek.");
-    renderAdmin();
+    approveActivity(target.dataset.approveActivity);
   }
   if (target.dataset.refund) {
     const booking = state.bookings.find((item) => item.id === target.dataset.refund);
@@ -1918,6 +2030,17 @@ document.addEventListener("click", (event) => {
     state.editingChildId = null;
     renderAuth();
   }
+  if (target.dataset.deleteCategory) {
+    state.categories = state.categories.filter((item) => item !== target.dataset.deleteCategory);
+    renderAdmin();
+  }
+  if (target.dataset.editCategory) {
+    const nextName = prompt("Kategori adı", target.dataset.editCategory);
+    if (nextName) {
+      state.categories = state.categories.map((item) => (item === target.dataset.editCategory ? nextName : item));
+      renderAdmin();
+    }
+  }
 });
 
 document.addEventListener("submit", (event) => {
@@ -1927,10 +2050,36 @@ document.addEventListener("submit", (event) => {
   if (event.target.id === "loginForm") handleLogin(event.target);
   if (event.target.id === "signupForm") handleSignup(event.target);
   if (event.target.id === "childForm") handleChildCreate(event.target);
+  if (event.target.id === "categoryForm") {
+    const name = new FormData(event.target).get("name");
+    if (name && !state.categories.includes(name)) state.categories.push(String(name));
+    renderAdmin();
+  }
+  if (event.target.id === "supportForm") {
+    const data = new FormData(event.target);
+    state.supportTickets.unshift({
+      subject: data.get("subject"),
+      type: data.get("type"),
+      message: data.get("message"),
+      email: state.currentUser?.email,
+      role: isVendor() ? "Satıcı" : isParent() ? "Ebeveyn" : "Admin",
+      status: "pending",
+    });
+    state.notifications.unshift({ text: "Destek talebiniz alındı.", read: false });
+    notify("Destek talebi admin kuyruğuna gönderildi.");
+    setRoute("home");
+  }
 });
 
 document.addEventListener("change", (event) => {
   if (event.target.matches('input[type="file"][data-preview-target]')) previewSelectedImages(event.target);
+  if (event.target.matches('input[type="file"][data-admin-avatar]')) {
+    const file = event.target.files?.[0];
+    if (file) fileToDataUrl(file).then((url) => {
+      state.adminAvatar = url;
+      renderAdmin();
+    });
+  }
 });
 
 document.querySelector("#mobileMenu").addEventListener("click", () => {
