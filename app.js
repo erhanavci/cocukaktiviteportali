@@ -1259,14 +1259,21 @@ function newActivityForm(vendor) {
         <label><span>Bitiş saati</span><input name="endTime" type="time" value="${endTime}" /></label>
         <label><span>Toplam süre (dk)</span><input name="duration" type="number" min="30" step="15" value="${duration}" required /></label>
         <label><span>Fiyat</span><input name="price" type="number" value="${editingActivity?.price ?? 600}" /></label>
-        <label class="wide"><span>Ana etkinlik görseli / thumbnail</span><input name="image" type="file" accept="image/*" /></label>
-        ${editingActivity?.imageUrl ? `<div class="wide image-preview"><img src="${editingActivity.imageUrl}" alt="${editingActivity.title} fotoğrafı" /></div>` : ""}
-        <label class="wide"><span>Geçmiş etkinlik fotoğrafları</span><input name="galleryImages" type="file" accept="image/*" multiple /></label>
+        <label class="wide"><span>Ana etkinlik görseli / thumbnail</span><input name="image" type="file" accept="image/*" data-preview-target="coverPreview" /></label>
+        <div class="wide media-grid" id="coverPreview">
+          ${
+            editingActivity?.imageUrl
+              ? `<div class="media-thumb"><img src="${editingActivity.imageUrl}" alt="${editingActivity.title} kapak görseli" /><button type="button" data-remove-cover>Kapak görselini kaldır</button></div>`
+              : ""
+          }
+        </div>
+        <label class="wide"><span>Geçmiş etkinlik fotoğrafları</span><input name="galleryImages" type="file" accept="image/*" multiple data-preview-target="galleryPreview" /></label>
         ${
           editingActivity?.galleryImages?.length
-            ? `<div class="wide photo-carousel">${editingActivity.galleryImages.map((url, index) => `<img src="${url}" alt="${editingActivity.title} galeri ${index + 1}" />`).join("")}</div>`
+            ? `<div class="wide media-grid">${editingActivity.galleryImages.map((url, index) => `<div class="media-thumb"><img src="${url}" alt="${editingActivity.title} galeri ${index + 1}" /><button type="button" data-remove-gallery-image="${encodeURIComponent(url)}">Kaldır</button></div>`).join("")}</div>`
             : ""
         }
+        <div class="wide media-grid" id="galleryPreview"></div>
         <label class="wide"><span>Açıklama</span><textarea name="description" required>${editingActivity?.description ?? ""}</textarea></label>
         <div class="wide map-frame compact-map">
           <iframe title="Etkinlik konum önizlemesi" src="${mapEmbedUrl(editingActivity ?? { locationQuery: "İstanbul" })}" loading="lazy"></iframe>
@@ -1354,6 +1361,11 @@ async function createActivity(form) {
     state.activities.unshift(activity);
   }
 
+  state.vendorTab = "activities";
+  state.editingActivityId = null;
+  notify(activityId ? "Etkinlik güncellemesi kaydediliyor..." : "Etkinlik oluşturuluyor...");
+  renderVendor();
+
   if (state.supabaseReady && state.currentUser) {
     const { data: vendorLink } = await state.supabaseClient
       .from("vendor_users")
@@ -1436,8 +1448,6 @@ async function createActivity(form) {
     }
   }
 
-  state.vendorTab = "activities";
-  state.editingActivityId = null;
   notify(activityId ? "Etkinlik güncellendi ve tekrar admin onayına alındı." : "Etkinlik pending durumunda oluşturuldu; admin onayı bekliyor.");
   renderVendor();
 }
@@ -1456,6 +1466,52 @@ async function deleteActivity(activityId) {
 
   notify("Etkinlik kaldırıldı.");
   renderVendor();
+}
+
+function removeGalleryImage(encodedUrl) {
+  const activity = state.activities.find((item) => item.id === state.editingActivityId);
+  if (!activity) return;
+  const url = decodeURIComponent(encodedUrl);
+  activity.galleryImages = (activity.galleryImages ?? []).filter((item) => item !== url);
+  renderVendor();
+}
+
+function removeCoverImage() {
+  const activity = state.activities.find((item) => item.id === state.editingActivityId);
+  if (!activity) return;
+  activity.imageUrl = "";
+  renderVendor();
+}
+
+function previewSelectedImages(input) {
+  const targetId = input.dataset.previewTarget;
+  const target = targetId ? document.querySelector(`#${targetId}`) : null;
+  if (!target) return;
+
+  target.innerHTML = "";
+  Array.from(input.files || []).forEach((file) => {
+    const index = Array.from(input.files || []).indexOf(file);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const item = document.createElement("div");
+      item.className = "media-thumb";
+      item.innerHTML = `<img src="${reader.result}" alt="${file.name}" /><button type="button" data-remove-selected-file="${input.name}" data-file-index="${index}">Seçimi kaldır</button>`;
+      target.appendChild(item);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function removeSelectedFile(inputName, index) {
+  const input = document.querySelector(`input[type="file"][name="${inputName}"]`);
+  if (!input?.files) return;
+
+  const transfer = new DataTransfer();
+  Array.from(input.files).forEach((file, fileIndex) => {
+    if (fileIndex !== Number(index)) transfer.items.add(file);
+  });
+  input.files = transfer.files;
+  previewSelectedImages(input);
 }
 
 function renderAdmin() {
@@ -1802,6 +1858,9 @@ document.addEventListener("click", (event) => {
     state.editingActivityId = null;
     renderVendor();
   }
+  if (target.dataset.removeGalleryImage) removeGalleryImage(target.dataset.removeGalleryImage);
+  if (target.hasAttribute("data-remove-cover")) removeCoverImage();
+  if (target.dataset.removeSelectedFile) removeSelectedFile(target.dataset.removeSelectedFile, target.dataset.fileIndex);
   if (target.hasAttribute("data-open-map-search")) {
     const form = target.closest("form");
     const locationQuery = form?.elements.locationQuery?.value || form?.elements.address?.value || "İstanbul";
@@ -1856,6 +1915,10 @@ document.addEventListener("submit", (event) => {
   if (event.target.id === "loginForm") handleLogin(event.target);
   if (event.target.id === "signupForm") handleSignup(event.target);
   if (event.target.id === "childForm") handleChildCreate(event.target);
+});
+
+document.addEventListener("change", (event) => {
+  if (event.target.matches('input[type="file"][data-preview-target]')) previewSelectedImages(event.target);
 });
 
 document.querySelector("#mobileMenu").addEventListener("click", () => {
