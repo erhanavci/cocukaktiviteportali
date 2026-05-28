@@ -7,6 +7,9 @@ const state = {
   adminTab: "approvals",
   currentUser: null,
   authProfile: null,
+  authMode: "choice",
+  signupRole: "parent",
+  editingChildId: null,
   supabaseClient: null,
   supabaseReady: false,
   supabaseConfigError: "",
@@ -198,6 +201,23 @@ async function setSupabaseUser(user) {
     role: user.email === ADMIN_EMAIL ? "admin" : user.user_metadata?.role ?? "parent",
     full_name: user.user_metadata?.full_name ?? user.email,
   };
+
+  if (state.authProfile.role === "parent" || user.email === ADMIN_EMAIL) {
+    const { data: children } = await state.supabaseClient
+      .from("children")
+      .select("id, name, age, interests")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: true });
+
+    if (children) {
+      state.children = children.map((child) => ({
+        id: child.id,
+        name: child.name,
+        age: child.age,
+        interests: child.interests ?? [],
+      }));
+    }
+  }
 }
 
 function isAdmin() {
@@ -434,48 +454,136 @@ function renderAuth() {
       <div class="section-heading">
         <div>
           <p class="eyebrow">Üyelik sistemi</p>
-          <h2>Ebeveyn ve satıcı hesapları ayrı ilerler</h2>
+          <h2>Giriş ve üyelik ayrı ilerler</h2>
           <p class="muted">${modeLabel}. Supabase ayarı girildiğinde kayıt/giriş gerçek auth üzerinden yapılır.</p>
           ${state.supabaseConfigError ? `<p class="status-pill red">${state.supabaseConfigError}</p>` : ""}
         </div>
       </div>
-      <div class="detail-layout">
-        <article class="panel">
-          <h3>Giriş yap</h3>
-          <form id="loginForm" class="form-grid">
-            <label class="wide"><span>E-posta</span><input name="email" type="email" required placeholder="ornek@mail.com" /></label>
-            <label class="wide"><span>Şifre</span><input name="password" type="password" required minlength="6" placeholder="En az 6 karakter" /></label>
-            <button class="primary-action wide" type="submit">Giriş yap</button>
-          </form>
-          <p class="muted">Admin paneli sadece ${ADMIN_EMAIL} hesabıyla görünür.</p>
-        </article>
-        <article class="panel">
-          <h3>Yeni üyelik</h3>
-          <form id="signupForm" class="form-grid">
-            <label><span>Ad soyad</span><input name="fullName" required placeholder="Adınız Soyadınız" /></label>
-            <label><span>Hesap tipi</span><select name="role"><option value="parent">Ebeveyn</option><option value="vendor">Satıcı / firma</option></select></label>
-            <label class="wide"><span>E-posta</span><input name="email" type="email" required placeholder="ornek@mail.com" /></label>
-            <label class="wide"><span>Şifre</span><input name="password" type="password" required minlength="6" placeholder="En az 6 karakter" /></label>
-            <label class="wide vendor-only"><span>Firma adı</span><input name="vendorName" placeholder="Firma / atölye adı" /></label>
-            <button class="primary-action wide" type="submit">Üyelik oluştur</button>
-          </form>
-        </article>
-      </div>
+      ${authPanel()}
     </section>
   `;
 }
 
+function authPanel() {
+  if (state.authMode === "login") {
+    return `
+      <div class="panel auth-panel">
+        <div class="panel-heading">
+          <div>
+            <h3>Giriş yap</h3>
+            <p class="muted">Admin paneli sadece ${ADMIN_EMAIL} hesabıyla görünür.</p>
+          </div>
+          <button class="ghost-action" data-auth-mode="choice">Geri</button>
+        </div>
+        <form id="loginForm" class="form-grid">
+          <label class="wide"><span>E-posta</span><input name="email" type="email" required placeholder="ornek@mail.com" /></label>
+          <label class="wide"><span>Şifre</span><input name="password" type="password" required minlength="6" placeholder="En az 6 karakter" /></label>
+          <button class="primary-action wide" type="submit">Giriş yap</button>
+        </form>
+      </div>
+    `;
+  }
+
+  if (state.authMode === "signup") {
+    return `
+      <div class="panel auth-panel">
+        <div class="panel-heading">
+          <div>
+            <h3>Üyelik tipi seç</h3>
+            <p class="muted">Ebeveyn etkinlik rezervasyonu yapar; firma etkinlik oluşturur ve admin onayı bekler.</p>
+          </div>
+          <button class="ghost-action" data-auth-mode="choice">Geri</button>
+        </div>
+        <div class="role-choice-grid">
+          <button class="role-choice" data-signup-role="parent">
+            <strong>Ebeveyn olarak üye ol</strong>
+            <span>Çocuk profili, favoriler ve rezervasyonlar</span>
+          </button>
+          <button class="role-choice" data-signup-role="vendor">
+            <strong>Firma olarak üye ol</strong>
+            <span>Satıcı paneli, etkinlik ve seans yönetimi</span>
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  if (state.authMode === "signupForm") {
+    const isVendorSignup = state.signupRole === "vendor";
+    return `
+      <div class="panel auth-panel">
+        <div class="panel-heading">
+          <div>
+            <h3>${isVendorSignup ? "Firma üyeliği" : "Ebeveyn üyeliği"}</h3>
+            <p class="muted">${isVendorSignup ? "Firma kaydı pending açılır ve admin onayı bekler." : "Ebeveyn hesabıyla çocuk profili ve rezervasyon oluşturabilirsiniz."}</p>
+          </div>
+          <button class="ghost-action" data-auth-mode="signup">Geri</button>
+        </div>
+        <form id="signupForm" class="form-grid">
+          <input type="hidden" name="role" value="${state.signupRole}" />
+          <label><span>Ad soyad</span><input name="fullName" required placeholder="Adınız Soyadınız" /></label>
+          <label><span>E-posta</span><input name="email" type="email" required placeholder="ornek@mail.com" /></label>
+          <label class="wide"><span>Şifre</span><input name="password" type="password" required minlength="6" placeholder="En az 6 karakter" /></label>
+          ${
+            isVendorSignup
+              ? `<label class="wide"><span>Firma adı</span><input name="vendorName" required placeholder="Firma / atölye adı" /></label>`
+              : ""
+          }
+          <button class="primary-action wide" type="submit">${isVendorSignup ? "Firma üyeliği oluştur" : "Ebeveyn üyeliği oluştur"}</button>
+        </form>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="auth-choice-grid">
+      <button class="panel auth-choice-card" data-auth-mode="login">
+        <strong>Giriş yap</strong>
+        <span>Mevcut ebeveyn, firma veya admin hesabıyla devam edin.</span>
+      </button>
+      <button class="panel auth-choice-card" data-auth-mode="signup">
+        <strong>Üye ol</strong>
+        <span>Ebeveyn ya da firma hesabı oluşturun.</span>
+      </button>
+    </div>
+  `;
+}
+
 function parentProfilePanel() {
+  const editingChild = state.children.find((child) => child.id === state.editingChildId);
   return `
     <h3>Çocuk profilleri</h3>
     <div class="sessions">
-      ${state.children.map((child) => `<div class="mini-card"><strong>${child.name}</strong><p class="muted">${child.age} yaş · ${child.interests.join(", ")}</p></div>`).join("")}
+      ${
+        state.children.length
+          ? state.children
+              .map(
+                (child) => `
+                  <div class="mini-card child-card">
+                    <div>
+                      <strong>${child.name}</strong>
+                      <p class="muted">${child.age} yaş · ${(child.interests ?? []).join(", ") || "İlgi alanı yok"}</p>
+                    </div>
+                    <div class="button-row">
+                      <button class="ghost-action" data-edit-child="${child.id}">Düzenle</button>
+                      <button class="ghost-action danger-action" data-delete-child="${child.id}">Kaldır</button>
+                    </div>
+                  </div>
+                `,
+              )
+              .join("")
+          : `<div class="empty-state">Henüz çocuk profili yok.</div>`
+      }
     </div>
     <form id="childForm" class="form-grid">
-      <label><span>Çocuk adı</span><input name="name" required placeholder="Ada" /></label>
-      <label><span>Yaş</span><input name="age" type="number" min="0" max="12" required value="6" /></label>
-      <label class="wide"><span>İlgi alanları</span><input name="interests" placeholder="Sanat, STEM" /></label>
-      <button class="ghost-action wide" type="submit">Çocuk profili ekle</button>
+      <input type="hidden" name="childId" value="${editingChild?.id ?? ""}" />
+      <label><span>Çocuk adı</span><input name="name" required placeholder="Ada" value="${editingChild?.name ?? ""}" /></label>
+      <label><span>Yaş</span><input name="age" type="number" min="0" max="12" required value="${editingChild?.age ?? 6}" /></label>
+      <label class="wide"><span>İlgi alanları</span><input name="interests" placeholder="Sanat, STEM" value="${(editingChild?.interests ?? []).join(", ")}" /></label>
+      <div class="wide button-row">
+        <button class="ghost-action" type="submit">${editingChild ? "Çocuk profilini güncelle" : "Çocuk profili ekle"}</button>
+        ${editingChild ? `<button class="ghost-action" type="button" data-cancel-child-edit>Düzenlemeyi iptal et</button>` : ""}
+      </div>
     </form>
   `;
 }
@@ -1275,14 +1383,17 @@ async function handleLogout() {
   if (state.supabaseReady) await state.supabaseClient.auth.signOut();
   state.currentUser = null;
   state.authProfile = null;
+  state.authMode = "choice";
+  state.editingChildId = null;
   notify("Çıkış yapıldı.");
   setRoute("home");
 }
 
 async function handleChildCreate(form) {
   const data = new FormData(form);
+  const childId = String(data.get("childId") || "");
   const child = {
-    id: `child-${Date.now()}`,
+    id: childId || `child-${Date.now()}`,
     name: String(data.get("name")).trim(),
     age: Number(data.get("age")),
     interests: String(data.get("interests") || "")
@@ -1290,18 +1401,60 @@ async function handleChildCreate(form) {
       .map((item) => item.trim())
       .filter(Boolean),
   };
-  state.children.push(child);
 
-  if (state.supabaseReady && state.currentUser) {
-    await state.supabaseClient.from("children").insert({
-      user_id: state.currentUser.id,
-      name: child.name,
-      age: child.age,
-      interests: child.interests,
-    });
+  if (childId) {
+    state.children = state.children.map((item) => (item.id === childId ? child : item));
+  } else {
+    state.children.push(child);
   }
 
-  notify("Çocuk profili eklendi.");
+  if (state.supabaseReady && state.currentUser) {
+    if (childId) {
+      await state.supabaseClient
+        .from("children")
+        .update({
+          name: child.name,
+          age: child.age,
+          interests: child.interests,
+        })
+        .eq("id", childId)
+        .eq("user_id", state.currentUser.id);
+    } else {
+      const { data: insertedChild } = await state.supabaseClient
+        .from("children")
+        .insert({
+          user_id: state.currentUser.id,
+          name: child.name,
+          age: child.age,
+          interests: child.interests,
+        })
+        .select("id, name, age, interests")
+        .single();
+
+      if (insertedChild) {
+        child.id = insertedChild.id;
+        state.children = state.children.map((item) => (item.id.startsWith("child-") && item.name === child.name ? child : item));
+      }
+    }
+  }
+
+  state.editingChildId = null;
+  notify(childId ? "Çocuk profili güncellendi." : "Çocuk profili eklendi.");
+  renderAuth();
+}
+
+async function handleChildDelete(childId) {
+  const child = state.children.find((item) => item.id === childId);
+  if (!child) return;
+
+  state.children = state.children.filter((item) => item.id !== childId);
+  if (state.editingChildId === childId) state.editingChildId = null;
+
+  if (state.supabaseReady && state.currentUser) {
+    await state.supabaseClient.from("children").delete().eq("id", childId).eq("user_id", state.currentUser.id);
+  }
+
+  notify("Çocuk profili kaldırıldı.");
   renderAuth();
 }
 
@@ -1344,6 +1497,24 @@ document.addEventListener("click", (event) => {
   }
   if (target.dataset.notify) notify(target.dataset.notify);
   if (target.hasAttribute("data-logout")) handleLogout();
+  if (target.dataset.authMode) {
+    state.authMode = target.dataset.authMode;
+    renderAuth();
+  }
+  if (target.dataset.signupRole) {
+    state.signupRole = target.dataset.signupRole;
+    state.authMode = "signupForm";
+    renderAuth();
+  }
+  if (target.dataset.editChild) {
+    state.editingChildId = target.dataset.editChild;
+    renderAuth();
+  }
+  if (target.dataset.deleteChild) handleChildDelete(target.dataset.deleteChild);
+  if (target.hasAttribute("data-cancel-child-edit")) {
+    state.editingChildId = null;
+    renderAuth();
+  }
 });
 
 document.addEventListener("submit", (event) => {
