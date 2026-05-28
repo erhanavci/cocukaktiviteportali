@@ -52,6 +52,7 @@ const state = {
       title: "Renkli Seramik Atölyesi",
       category: "Sanat atölyesi",
       type: "Tek seans",
+      participationType: "group",
       minAge: 5,
       maxAge: 9,
       district: "Kadıköy",
@@ -77,6 +78,7 @@ const state = {
       title: "Mini Robotik ve STEM Keşfi",
       category: "Bilim/STEM",
       type: "Haftalık tekrar eden kurs",
+      participationType: "group",
       minAge: 7,
       maxAge: 12,
       district: "Beşiktaş",
@@ -102,6 +104,7 @@ const state = {
       title: "Ebeveynli Oyun Grubu",
       category: "Oyun grubu",
       type: "Tek seans",
+      participationType: "group",
       minAge: 1,
       maxAge: 3,
       district: "Kadıköy",
@@ -126,6 +129,7 @@ const state = {
       title: "Pera Müzesi Çocuk Turu",
       category: "Müze/gezi",
       type: "Fiziksel",
+      participationType: "group",
       minAge: 6,
       maxAge: 10,
       district: "Beyoğlu",
@@ -297,6 +301,7 @@ async function loadMarketplaceData() {
       title: activity.title,
       category: activity.category?.name ?? "Etkinlik",
       type: activity.activity_type,
+      participationType: activity.participation_type ?? "group",
       minAge: activity.min_age,
       maxAge: activity.max_age,
       district: activity.district,
@@ -364,6 +369,12 @@ function mapEmbedUrl(activity) {
     return `https://www.openstreetmap.org/export/embed.html?bbox=${lng - delta}%2C${lat - delta}%2C${lng + delta}%2C${lat + delta}&layer=mapnik&marker=${lat}%2C${lng}`;
   }
   return `https://www.openstreetmap.org/export/embed.html?bbox=28.80%2C40.85%2C29.20%2C41.15&layer=mapnik`;
+}
+
+function remainingLabel(activity) {
+  const remaining = activity.sessions.reduce((sum, session) => sum + Math.max(0, session.capacity - session.reserved), 0);
+  if (activity.participationType === "private") return remaining > 0 ? "Bire bir uygun" : "Bire bir dolu";
+  return `${remaining} kişilik yer kaldı`;
 }
 
 function fileToDataUrl(file) {
@@ -733,7 +744,6 @@ function renderActivityGrid(activities) {
   grid.innerHTML = activities
     .map((activity) => {
       const vendor = getVendor(activity.vendorId);
-      const remaining = activity.sessions.reduce((sum, session) => sum + (session.capacity - session.reserved), 0);
       return `
         <article class="activity-card">
           <div class="activity-visual" style="${activity.imageUrl ? `--image:url('${activity.imageUrl}')` : `--visual:${activity.visual}`}">
@@ -744,7 +754,8 @@ function renderActivityGrid(activities) {
               <span class="tag">${activity.minAge}-${activity.maxAge} yaş</span>
               <span class="tag">${activity.district}</span>
               ${activity.address ? `<span class="tag">Konumlu</span>` : ""}
-              <span class="tag">${remaining} kontenjan</span>
+              <span class="tag">${activity.participationType === "private" ? "Bire bir" : "Toplu"}</span>
+              <span class="tag">${remainingLabel(activity)}</span>
             </div>
             <h3>${activity.title}</h3>
             <p class="muted">${vendor.name} · ${activity.type}</p>
@@ -784,6 +795,7 @@ function renderDetail() {
           <p>${activity.description}</p>
           <div class="tag-row">
             <span class="tag">${activity.type}</span>
+            <span class="tag">${activity.participationType === "private" ? "Bire bir etkinlik" : "Toplu etkinlik"}</span>
             ${activity.address ? `<span class="tag">${activity.address}</span>` : ""}
             <span class="tag">${activity.parentParticipation}</span>
             <span class="tag">${activity.cancellation}</span>
@@ -801,7 +813,7 @@ function renderDetail() {
                   <label class="session-row ${session.id === firstAvailable?.id ? "selected" : ""}">
                     <span>
                       <strong>${dateTime(session.start)}</strong>
-                      <span class="muted">${remaining} kontenjan · ${money(session.price)}</span>
+                      <span class="muted">${activity.participationType === "private" ? (remaining > 0 ? "Bire bir uygun" : "Bire bir dolu") : `${remaining} kişilik yer kaldı`} · Maks. ${session.capacity} kişi · ${money(session.price)}</span>
                     </span>
                     <input type="radio" name="session" value="${session.id}" ${session.id === firstAvailable?.id ? "checked" : ""} ${remaining <= 0 ? "disabled" : ""} />
                   </label>
@@ -1156,6 +1168,8 @@ function newActivityForm(vendor) {
         <input type="hidden" name="currentImageUrl" value="${editingActivity?.imageUrl ?? ""}" />
         <label><span>Başlık</span><input name="title" required placeholder="Yaratıcı drama atölyesi" value="${editingActivity?.title ?? ""}" /></label>
         <label><span>Kategori</span><select name="category">${["Oyun grubu", "Sanat atölyesi", "Spor", "Müzik", "Dans", "Drama", "Müze/gezi", "Bilim/STEM", "Doğa"].map((item) => `<option ${editingActivity?.category === item ? "selected" : ""}>${item}</option>`).join("")}</select></label>
+        <label><span>Katılım tipi</span><select name="participationType"><option value="group" ${editingActivity?.participationType !== "private" ? "selected" : ""}>Toplu etkinlik</option><option value="private" ${editingActivity?.participationType === "private" ? "selected" : ""}>Bire bir etkinlik</option></select></label>
+        <label><span>Maksimum kişi sayısı</span><input name="capacity" type="number" min="1" value="${session?.capacity ?? 8}" /></label>
         <label><span>Min yaş</span><input name="minAge" type="number" min="0" max="12" value="${editingActivity?.minAge ?? 5}" /></label>
         <label><span>Max yaş</span><input name="maxAge" type="number" min="0" max="12" value="${editingActivity?.maxAge ?? 8}" /></label>
         <label><span>İlçe</span><input name="district" value="${editingActivity?.district ?? vendor.district}" /></label>
@@ -1166,7 +1180,6 @@ function newActivityForm(vendor) {
         <label><span>Başlangıç saati</span><input name="startTime" type="time" value="${startTime}" required /></label>
         <label><span>Bitiş saati</span><input name="endTime" type="time" value="${endTime}" /></label>
         <label><span>Toplam süre (dk)</span><input name="duration" type="number" min="30" step="15" value="${duration}" required /></label>
-        <label><span>Kontenjan</span><input name="capacity" type="number" min="1" value="${session?.capacity ?? 10}" /></label>
         <label><span>Fiyat</span><input name="price" type="number" value="${editingActivity?.price ?? 600}" /></label>
         <label class="wide"><span>Etkinlik fotoğrafı</span><input name="image" type="file" accept="image/*" /></label>
         ${editingActivity?.imageUrl ? `<div class="wide image-preview"><img src="${editingActivity.imageUrl}" alt="${editingActivity.title} fotoğrafı" /></div>` : ""}
@@ -1202,7 +1215,8 @@ async function createActivity(form) {
   const duration = Number(data.get("duration") || 120);
   const startAt = `${date}T${startTime}:00`;
   const endAt = endTime ? `${date}T${endTime}:00` : localDateTimeFromDuration(date, startTime, duration);
-  const capacity = Number(data.get("capacity") || 10);
+  const participationType = String(data.get("participationType") || "group");
+  const capacity = participationType === "private" ? 1 : Number(data.get("capacity") || 8);
   const lat = data.get("lat") === "" ? null : Number(data.get("lat"));
   const lng = data.get("lng") === "" ? null : Number(data.get("lng"));
   const activity = {
@@ -1211,6 +1225,7 @@ async function createActivity(form) {
     title: data.get("title"),
     category: data.get("category"),
     type: "Tek seans",
+    participationType,
     minAge: Number(data.get("minAge")),
     maxAge: Number(data.get("maxAge")),
     district: data.get("district"),
@@ -1267,6 +1282,7 @@ async function createActivity(form) {
         min_age: Number(data.get("minAge")),
         max_age: Number(data.get("maxAge")),
         activity_type: "Tek seans",
+        participation_type: participationType,
         district: data.get("district"),
         address: data.get("address"),
         lat,
