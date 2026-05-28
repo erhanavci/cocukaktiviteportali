@@ -21,6 +21,7 @@ const state = {
   supabaseReady: false,
   supabaseConfigError: "",
   favorites: new Set(["act-art-1"]),
+  favoriteCounts: { "act-art-1": 1 },
   bookings: [],
   vendors: [
     {
@@ -369,6 +370,58 @@ async function loadMarketplaceData() {
       })),
     }));
   }
+
+  await loadFavoriteData();
+  await loadBookingData();
+}
+
+async function loadFavoriteData() {
+  if (!state.supabaseReady || !state.currentUser) return;
+
+  const { data, error } = await state.supabaseClient.from("favorites").select("activity_id,user_id");
+  if (error) return;
+
+  state.favoriteCounts = {};
+  data.forEach((favorite) => {
+    state.favoriteCounts[favorite.activity_id] = (state.favoriteCounts[favorite.activity_id] || 0) + 1;
+  });
+
+  if (isParent()) {
+    state.favorites = new Set(data.filter((favorite) => favorite.user_id === state.currentUser.id).map((favorite) => favorite.activity_id));
+  }
+}
+
+async function loadBookingData() {
+  if (!state.supabaseReady || !state.currentUser) return;
+
+  const { data, error } = await state.supabaseClient
+    .from("bookings")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error || !data) return;
+
+  state.bookings = data
+    .map((booking) => {
+      const found = getSession(booking.session_id);
+      if (!found) return null;
+      const vendor = getVendor(found.activity.vendorId);
+      const totalAmount = Number(booking.total_amount ?? found.session.price ?? 0);
+      const commissionRate = vendor?.commissionRate ?? 0.12;
+      return {
+        id: booking.id,
+        activityId: found.activity.id,
+        sessionId: booking.session_id,
+        childId: "",
+        status: booking.status,
+        paymentProvider: "Supabase",
+        totalAmount,
+        commissionRate,
+        commissionAmount: Math.round(totalAmount * commissionRate),
+        createdAt: booking.created_at,
+        notes: "",
+      };
+    })
+    .filter(Boolean);
 }
 
 const money = (amount) =>
@@ -418,6 +471,10 @@ function remainingLabel(activity) {
   const remaining = activity.sessions.reduce((sum, session) => sum + Math.max(0, session.capacity - session.reserved), 0);
   if (activity.participationType === "private") return remaining > 0 ? "Bire bir uygun" : "Bire bir dolu";
   return `${remaining} kişilik yer kaldı`;
+}
+
+function favoriteCount(activityId) {
+  return state.favoriteCounts[activityId] || 0;
 }
 
 function fileToDataUrl(file) {
@@ -932,6 +989,8 @@ function renderDetail() {
           <div class="tag-row">
             <span class="tag">${activity.type}</span>
             <span class="tag">${activity.participationType === "private" ? "Bire bir etkinlik" : "Toplu etkinlik"}</span>
+            <span class="tag">${favoriteCount(activity.id)} favori</span>
+            <span class="tag">${remainingLabel(activity)}</span>
             ${activity.address ? `<span class="tag">${activity.address}</span>` : ""}
             <span class="tag">${activity.parentParticipation}</span>
             <span class="tag">${activity.cancellation}</span>
@@ -1220,6 +1279,7 @@ function activityTable(activities) {
                   <div class="tag-row">
                     <span class="tag">${activity.participationType === "private" ? "Bire bir" : "Toplu"}</span>
                     <span class="tag">${remainingLabel(activity)}</span>
+                    <span class="tag">${favoriteCount(activity.id)} favori</span>
                     <span class="tag">${activity.district}</span>
                     ${firstSession ? `<span class="tag">${dateTime(firstSession.start)} · ${durationMinutes(firstSession.start, firstSession.end)} dk</span>` : ""}
                   </div>
@@ -1954,6 +2014,43 @@ async function handleChildDelete(childId) {
   renderAuth();
 }
 
+async function toggleFavorite(activityId) {
+  if (!state.currentUser || !isParent()) {
+    notify("Favoriler ebeveyn hesapları içindir.");
+    setRoute("auth");
+    return;
+  }
+
+  const wasFavorite = state.favorites.has(activityId);
+  if (wasFavorite) {
+    state.favorites.delete(activityId);
+    state.favoriteCounts[activityId] = Math.max(0, favoriteCount(activityId) - 1);
+  } else {
+    state.favorites.add(activityId);
+    state.favoriteCounts[activityId] = favoriteCount(activityId) + 1;
+  }
+
+  notify(wasFavorite ? "Favorilerden çıkarıldı." : "Favorilere eklendi.");
+  render();
+
+  if (!state.supabaseReady) return;
+
+  const { error } = wasFavorite
+    ? await state.supabaseClient.from("favorites").delete().eq("user_id", state.currentUser.id).eq("activity_id", activityId)
+    : await state.supabaseClient.from("favorites").upsert({ user_id: state.currentUser.id, activity_id: activityId });
+
+  if (error) {
+    wasFavorite ? state.favorites.add(activityId) : state.favorites.delete(activityId);
+    state.favoriteCounts[activityId] = Math.max(0, favoriteCount(activityId) + (wasFavorite ? 1 : -1));
+    notify(`Favori kaydı güncellenemedi: ${error.message}`);
+    render();
+    return;
+  }
+
+  await loadFavoriteData();
+  render();
+}
+
 document.addEventListener("click", (event) => {
   const target = event.target.closest("button, a");
   if (!target) return;
@@ -1962,10 +2059,7 @@ document.addEventListener("click", (event) => {
   if (target.dataset.scroll) document.querySelector(`#${target.dataset.scroll}`)?.scrollIntoView({ behavior: "smooth" });
   if (target.dataset.detail) setRoute("detail", target.dataset.detail);
   if (target.dataset.favorite) {
-    const id = target.dataset.favorite;
-    state.favorites.has(id) ? state.favorites.delete(id) : state.favorites.add(id);
-    notify(state.favorites.has(id) ? "Favorilere eklendi." : "Favorilerden çıkarıldı.");
-    render();
+    toggleFavorite(target.dataset.favorite);
   }
   if (target.dataset.vendorTab) {
     state.vendorTab = target.dataset.vendorTab;

@@ -366,6 +366,15 @@ create policy "favorites owner access" on public.favorites
 for all using (user_id = auth.uid())
 with check (user_id = auth.uid());
 
+drop policy if exists "favorites vendor admin read" on public.favorites;
+create policy "favorites vendor admin read" on public.favorites
+for select using (public.is_admin() or exists (
+  select 1
+  from public.activities a
+  join public.vendor_users vu on vu.vendor_id = a.vendor_id
+  where a.id = favorites.activity_id and vu.user_id = auth.uid()
+));
+
 drop policy if exists "admin payments" on public.payments;
 create policy "admin payments" on public.payments
 for all using (public.is_admin())
