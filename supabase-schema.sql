@@ -460,6 +460,11 @@ drop policy if exists "categories readable" on public.categories;
 create policy "categories readable" on public.categories
 for select using (status = 'active' or public.is_admin());
 
+drop policy if exists "categories admin manage" on public.categories;
+create policy "categories admin manage" on public.categories
+for all using (public.is_admin())
+with check (public.is_admin());
+
 drop policy if exists "activities public approved" on public.activities;
 create policy "activities public approved" on public.activities
 for select using (status = 'approved' or public.is_admin() or exists (

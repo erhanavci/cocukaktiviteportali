@@ -784,6 +784,12 @@ input[type="range"] {
   font-weight: 800;
 }
 
+.interest-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
 .session-editor {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr)) auto;
@@ -1216,6 +1222,7 @@ button:disabled {
   .auth-choice-grid,
   .role-choice-grid,
   .form-grid,
+  .interest-grid,
   .calendar-grid {
     grid-template-columns: 1fr;
   }

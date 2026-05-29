@@ -187,8 +187,8 @@ const state = {
     },
   ],
   children: [
-    { id: "child-1", name: "Ada", age: 6, interests: ["Sanat", "Müze"] },
-    { id: "child-2", name: "Deniz", age: 9, interests: ["STEM", "Spor"] },
+    { id: "child-1", name: "Ada", age: 6, interests: ["Sanat atölyesi", "Müze/gezi"] },
+    { id: "child-2", name: "Deniz", age: 9, interests: ["Bilim/STEM", "Spor"] },
   ],
 };
 
@@ -482,6 +482,8 @@ async function loadMarketplaceData() {
     }));
   }
 
+  await loadCategoryData();
+
   const { data: activities } = await state.supabaseClient
     .from("activities")
     .select("*, category:categories(name), sessions:activity_sessions(*)")
@@ -528,6 +530,12 @@ async function loadMarketplaceData() {
   await loadReviewData();
   await loadSupportTickets();
   await loadAdminUsers();
+}
+
+async function loadCategoryData() {
+  if (!state.supabaseReady) return;
+  const { data, error } = await state.supabaseClient.from("categories").select("name").order("name", { ascending: true });
+  if (!error && data?.length) state.categories = data.map((category) => category.name);
 }
 
 async function loadReviewData() {
@@ -1197,6 +1205,7 @@ function authPanel() {
 
 function parentProfilePanel() {
   const editingChild = state.children.find((child) => child.id === state.editingChildId);
+  const selectedInterests = new Set(editingChild?.interests ?? []);
   return `
     <h3>Çocuk profilleri</h3>
     <div class="sessions">
@@ -1225,7 +1234,21 @@ function parentProfilePanel() {
       <input type="hidden" name="childId" value="${editingChild?.id ?? ""}" />
       <label><span>Çocuk adı</span><input name="name" required placeholder="Ada" value="${editingChild?.name ?? ""}" /></label>
       <label><span>Yaş</span><input name="age" type="number" min="0" max="12" required value="${editingChild?.age ?? 6}" /></label>
-      <label class="wide"><span>İlgi alanları</span><input name="interests" placeholder="Sanat, STEM" value="${(editingChild?.interests ?? []).join(", ")}" /></label>
+      <fieldset class="wide option-group">
+        <legend>İlgi alanları</legend>
+        <div class="interest-grid">
+          ${state.categories
+            .map(
+              (category) => `
+                <label class="check-row">
+                  <input type="checkbox" name="interests" value="${category}" ${selectedInterests.has(category) ? "checked" : ""} />
+                  <span>${category}</span>
+                </label>
+              `,
+            )
+            .join("")}
+        </div>
+      </fieldset>
       <div class="wide button-row">
         <button class="ghost-action" type="submit">${editingChild ? "Çocuk profilini güncelle" : "Çocuk profili ekle"}</button>
         ${editingChild ? `<button class="ghost-action" type="button" data-cancel-child-edit>Düzenlemeyi iptal et</button>` : ""}
@@ -2097,7 +2120,7 @@ function newActivityForm(vendor) {
         <input type="hidden" name="currentImageUrl" value="${editingActivity?.imageUrl ?? ""}" />
         <input type="hidden" name="currentGalleryImages" value="${(editingActivity?.galleryImages ?? []).join("|")}" />
         <label><span>Başlık</span><input name="title" required placeholder="Yaratıcı drama atölyesi" value="${editingActivity?.title ?? ""}" /></label>
-        <label><span>Kategori</span><select name="category">${["Oyun grubu", "Sanat atölyesi", "Spor", "Müzik", "Dans", "Drama", "Müze/gezi", "Bilim/STEM", "Doğa"].map((item) => `<option ${editingActivity?.category === item ? "selected" : ""}>${item}</option>`).join("")}</select></label>
+        <label><span>Kategori</span><select name="category">${state.categories.map((item) => `<option ${editingActivity?.category === item ? "selected" : ""}>${item}</option>`).join("")}</select></label>
         <label><span>Katılım tipi</span><select name="participationType"><option value="group" ${editingActivity?.participationType !== "private" ? "selected" : ""}>Toplu etkinlik</option><option value="private" ${editingActivity?.participationType === "private" ? "selected" : ""}>Bire bir etkinlik</option></select></label>
         <label><span>Min yaş</span><input name="minAge" type="number" min="0" max="12" value="${editingActivity?.minAge ?? 5}" /></label>
         <label><span>Max yaş</span><input name="maxAge" type="number" min="0" max="12" value="${editingActivity?.maxAge ?? 8}" /></label>
@@ -2856,10 +2879,7 @@ async function handleChildCreate(form) {
     id: childId || `child-${Date.now()}`,
     name: String(data.get("name")).trim(),
     age: Number(data.get("age")),
-    interests: String(data.get("interests") || "")
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean),
+    interests: data.getAll("interests").map(String),
   };
 
   if (childId) {
@@ -3060,12 +3080,19 @@ document.addEventListener("click", (event) => {
     renderAuth();
   }
   if (target.dataset.deleteCategory) {
+    if (state.supabaseReady) state.supabaseClient.from("categories").delete().eq("name", target.dataset.deleteCategory);
     state.categories = state.categories.filter((item) => item !== target.dataset.deleteCategory);
     renderAdmin();
   }
   if (target.dataset.editCategory) {
     const nextName = prompt("Kategori adı", target.dataset.editCategory);
     if (nextName) {
+      if (state.supabaseReady) {
+        state.supabaseClient
+          .from("categories")
+          .update({ name: nextName, slug: slugify(nextName) })
+          .eq("name", target.dataset.editCategory);
+      }
       state.categories = state.categories.map((item) => (item === target.dataset.editCategory ? nextName : item));
       renderAdmin();
     }
@@ -3084,7 +3111,10 @@ document.addEventListener("submit", async (event) => {
   if (event.target.id === "childForm") await handleChildCreate(event.target);
   if (event.target.id === "categoryForm") {
     const name = new FormData(event.target).get("name");
-    if (name && !state.categories.includes(name)) state.categories.push(String(name));
+    if (name && !state.categories.includes(name)) {
+      state.categories.push(String(name));
+      if (state.supabaseReady) await state.supabaseClient.from("categories").upsert({ name: String(name), slug: slugify(name) }, { onConflict: "slug" });
+    }
     renderAdmin();
   }
   if (event.target.matches("[data-support-reply-form]")) {
