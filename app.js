@@ -1325,6 +1325,7 @@ function renderHome() {
   setupFilters();
   renderActivityGrid(activities);
   setupHeroSearch();
+  setupParallaxDots();
 }
 
 function renderCategoryShowcase() {
@@ -1333,8 +1334,19 @@ function renderCategoryShowcase() {
   const palette = ["blue", "green", "orange", "purple", "red", "yellow"];
   grid.innerHTML = state.categories
     .slice(0, 12)
-    .map((category, index) => `<button class="category-tile ${palette[index % palette.length]}" data-category-filter="${category}"><span class="category-icon ${categoryIcon(category)}" aria-hidden="true"></span><strong>${category}</strong></button>`)
+    .map((category) => `<button class="category-tile ${categoryTone(category, palette)}" data-category-filter="${category}"><span class="category-icon ${categoryIcon(category)}" aria-hidden="true"></span><strong>${category}</strong></button>`)
     .join("");
+}
+
+function categoryTone(category, fallbackPalette) {
+  const text = category.toLocaleLowerCase("tr-TR");
+  if (text.includes("sanat")) return "blue";
+  if (text.includes("bilim") || text.includes("stem")) return "green";
+  if (text.includes("spor")) return "orange";
+  if (text.includes("müzik") || text.includes("dans")) return "purple";
+  if (text.includes("kod")) return "red";
+  if (text.includes("doğa")) return "yellow";
+  return fallbackPalette[Math.abs([...category].reduce((sum, char) => sum + char.charCodeAt(0), 0)) % fallbackPalette.length];
 }
 
 function categoryIcon(category) {
@@ -1405,6 +1417,25 @@ function setupHeroSearch() {
     app.querySelector("#results")?.scrollIntoView({ behavior: "smooth" });
     renderActivityGrid(filterActivities(new FormData(filters)));
   });
+}
+
+function setActiveCategoryTile(category) {
+  app.querySelectorAll("[data-category-filter]").forEach((tile) => {
+    tile.classList.toggle("active-filter", tile.dataset.categoryFilter === category);
+  });
+}
+
+function setupParallaxDots() {
+  const dots = [...document.querySelectorAll("[data-parallax]")];
+  if (!dots.length) return;
+  const moveDots = () => {
+    const scrollY = window.scrollY || 0;
+    dots.forEach((dot) => {
+      dot.style.transform = `translate3d(0, ${scrollY * Number(dot.dataset.parallax || 0.12)}px, 0)`;
+    });
+  };
+  moveDots();
+  window.addEventListener("scroll", moveDots, { passive: true });
 }
 
 function renderAuth() {
@@ -1652,6 +1683,7 @@ function setupFilters() {
     form.reset();
     form.elements.maxPrice.value = 10000;
     app.querySelector("#maxPriceLabel").textContent = money(10000);
+    setActiveCategoryTile("");
     renderActivityGrid(publishedActivities());
   });
 }
@@ -1715,10 +1747,10 @@ function renderActivityGrid(activities) {
             <p class="muted">Düzenleyen <button class="text-link" data-vendor-detail="${vendor.id}">${vendor.name}</button> · ${activity.type}</p>
             <p class="card-description">${activity.description}</p>
             <div class="activity-facts">
-              <span>${duration >= 60 ? `${Math.round(duration / 60)} saat` : `${duration} dk`}</span>
-              <span>${activity.minAge}-${activity.maxAge} yaş</span>
-              <span>${deliveryLabel(activity.deliveryMode)}</span>
-              <span>${remainingLabel(activity)}</span>
+              <span class="fact-item fact-clock"><i aria-hidden="true"></i>${duration >= 60 ? `${Math.round(duration / 60)} saat` : `${duration} dk`}</span>
+              <span class="fact-item fact-child"><i aria-hidden="true"></i>${activity.minAge}-${activity.maxAge} yaş</span>
+              <span class="fact-item fact-mode"><i aria-hidden="true"></i>${deliveryLabel(activity.deliveryMode)}</span>
+              <span class="fact-item fact-seat"><i aria-hidden="true"></i>${remainingLabel(activity)}</span>
             </div>
             <div class="card-footer">
               <span class="location-label">${isOnlineActivity(activity) ? "Google Meet" : activity.district}</span>
@@ -3960,6 +3992,7 @@ document.addEventListener("click", async (event) => {
     const form = app.querySelector("#filters");
     if (form?.elements.category) {
       form.elements.category.value = target.dataset.categoryFilter;
+      setActiveCategoryTile(target.dataset.categoryFilter);
       app.querySelector("#results")?.scrollIntoView({ behavior: "smooth" });
       renderActivityGrid(filterActivities(new FormData(form)));
     }
@@ -3968,6 +4001,7 @@ document.addEventListener("click", async (event) => {
     const form = app.querySelector("#filters");
     if (form?.elements.category) {
       form.elements.category.value = target.dataset.searchTag;
+      setActiveCategoryTile(target.dataset.searchTag);
       app.querySelector("#results")?.scrollIntoView({ behavior: "smooth" });
       renderActivityGrid(filterActivities(new FormData(form)));
     }
