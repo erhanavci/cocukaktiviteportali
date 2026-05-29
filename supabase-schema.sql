@@ -147,6 +147,7 @@ create table if not exists public.bookings (
   status public.booking_status not null default 'draft',
   participant_count int not null default 1,
   total_amount numeric(12, 2) not null,
+  cancelled_at timestamptz,
   created_at timestamptz not null default now()
 );
 
@@ -214,6 +215,8 @@ create table if not exists public.subscription_plans (
   price numeric(12, 2) not null default 0,
   is_active boolean not null default false
 );
+
+alter table public.bookings add column if not exists cancelled_at timestamptz;
 
 create or replace function public.sync_session_reserved_count()
 returns trigger

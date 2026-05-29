@@ -425,6 +425,17 @@ function notificationItems() {
       .slice(0, 8)
       .forEach((booking) => {
         const found = getSession(booking.sessionId);
+        if (booking.status === "cancelled_by_user") {
+          items.push({
+            id: `vendor-cancel-${booking.id}-${booking.cancelledAt || booking.status}`,
+            text: `${booking.buyerName || booking.buyerEmail || "Bir kullanıcı"} ${found?.activity.title || "etkinlik"} katılımını iptal etti`,
+            meta: "Rezervasyon iptali",
+            route: "vendor",
+            tab: "bookings",
+          });
+          return;
+        }
+        if (!["confirmed", "pending_payment"].includes(booking.status)) return;
         items.push({
           id: `vendor-booking-${booking.id}`,
           text: `${found?.activity.title || "Etkinlik"} için yeni satın alma`,
@@ -645,6 +656,7 @@ async function loadBookingData() {
         commissionRate,
         commissionAmount: Math.round(totalAmount * commissionRate),
         createdAt: booking.created_at,
+        cancelledAt: booking.cancelled_at,
         notes: "",
       };
     })
@@ -1663,6 +1675,7 @@ async function createBooking(form) {
     commissionRate: vendor.commissionRate,
     commissionAmount: Math.round(totalAmount * vendor.commissionRate),
     createdAt: new Date().toISOString(),
+    cancelledAt: null,
     notes: formData.get("notes"),
   };
   state.bookings.unshift(booking);
@@ -1857,6 +1870,30 @@ function canCancelBooking(booking) {
   return isParent() && cancellableStatuses.includes(booking.status) && new Date(found.session.start).getTime() - Date.now() >= 24 * 60 * 60 * 1000;
 }
 
+function monthlyUserCancellationCount(referenceDate = new Date()) {
+  if (!state.currentUser) return 0;
+  const month = referenceDate.getMonth();
+  const year = referenceDate.getFullYear();
+  return state.bookings.filter((booking) => {
+    const isOwner = !booking.userId || booking.userId === state.currentUser.id;
+    if (!isOwner || booking.status !== "cancelled_by_user") return false;
+    const cancelledDate = new Date(booking.cancelledAt || booking.createdAt || 0);
+    return cancelledDate.getMonth() === month && cancelledDate.getFullYear() === year;
+  }).length;
+}
+
+function notifyCancellationLimit({ showToast = true } = {}) {
+  const text = "Aylık iptal hakkınız 2 adet ile sınırlıdır. Bu ay iptal hakkınızı doldurdunuz.";
+  state.notifications.unshift({
+    id: `cancel-limit-${state.currentUser?.id || "demo"}-${new Date().toISOString()}`,
+    text,
+    meta: "Rezervasyon",
+    route: "bookings",
+  });
+  if (showToast) notify(text);
+  updateNav();
+}
+
 async function cancelBooking(id) {
   const booking = state.bookings.find((item) => item.id === id);
   if (!booking || !canCancelBooking(booking)) {
@@ -1864,11 +1901,27 @@ async function cancelBooking(id) {
     return;
   }
   const nextStatus = isVendor() ? "cancelled_by_vendor" : "cancelled_by_user";
+  if (nextStatus === "cancelled_by_user" && monthlyUserCancellationCount() >= 2) {
+    notifyCancellationLimit();
+    return;
+  }
+  const cancelledAt = new Date().toISOString();
   booking.status = nextStatus;
+  booking.cancelledAt = cancelledAt;
   const found = getSession(booking.sessionId);
   if (found) found.session.reserved = Math.max(0, found.session.reserved - (booking.participantCount || booking.childIds?.length || 1));
+  if (nextStatus === "cancelled_by_user") {
+    const cancellationCount = monthlyUserCancellationCount();
+    state.notifications.unshift({
+      id: `cancelled-booking-${booking.id}`,
+      text: `${found?.activity.title || "Etkinlik"} rezervasyonunuz iptal edildi. Bu ay kalan iptal hakkınız: ${Math.max(0, 2 - cancellationCount)}`,
+      meta: "Rezervasyon",
+      route: "bookings",
+    });
+    if (cancellationCount >= 2) notifyCancellationLimit({ showToast: false });
+  }
   if (state.supabaseReady && isUuid(id)) {
-    const { error } = await state.supabaseClient.from("bookings").update({ status: nextStatus }).eq("id", id);
+    const { error } = await state.supabaseClient.from("bookings").update({ status: nextStatus, cancelled_at: cancelledAt }).eq("id", id);
     if (error) notify(`İptal yerelde yapıldı; Supabase güncellenemedi: ${error.message}`);
   }
   notify("Rezervasyon iptal edildi.");
