@@ -1333,19 +1333,31 @@ function renderCategoryShowcase() {
   const palette = ["blue", "green", "orange", "purple", "red", "yellow"];
   grid.innerHTML = state.categories
     .slice(0, 12)
-    .map((category, index) => `<button class="category-tile ${palette[index % palette.length]}" data-category-filter="${category}"><span>${categoryIcon(category)}</span><strong>${category}</strong></button>`)
+    .map((category, index) => `<button class="category-tile ${palette[index % palette.length]}" data-category-filter="${category}"><span class="category-icon ${categoryIcon(category)}" aria-hidden="true"></span><strong>${category}</strong></button>`)
     .join("");
 }
 
 function categoryIcon(category) {
   const text = category.toLocaleLowerCase("tr-TR");
-  if (text.includes("sanat")) return "🎨";
-  if (text.includes("bilim") || text.includes("stem") || text.includes("kod")) return "⚙";
-  if (text.includes("spor")) return "●";
-  if (text.includes("müzik") || text.includes("dans")) return "♪";
-  if (text.includes("doğa")) return "⌂";
-  if (text.includes("müze")) return "◆";
-  return "✦";
+  if (text.includes("sanat")) return "icon-palette";
+  if (text.includes("bilim") || text.includes("stem")) return "icon-flask";
+  if (text.includes("kod")) return "icon-code";
+  if (text.includes("spor")) return "icon-ball";
+  if (text.includes("müzik") || text.includes("dans")) return "icon-music";
+  if (text.includes("doğa")) return "icon-tree";
+  if (text.includes("müze")) return "icon-museum";
+  if (text.includes("oyun")) return "icon-play";
+  return "icon-star";
+}
+
+function socialIcon(platform) {
+  const text = platform.toLocaleLowerCase("tr-TR");
+  if (text.includes("instagram")) return "social-instagram";
+  if (text.includes("facebook")) return "social-facebook";
+  if (text.includes("youtube")) return "social-youtube";
+  if (text.includes("x") || text.includes("twitter")) return "social-x";
+  if (text.includes("linkedin")) return "social-linkedin";
+  return "social-generic";
 }
 
 function renderSiteFooter() {
@@ -1358,7 +1370,7 @@ function renderSiteFooter() {
         <div class="footer-brand"><span class="brand-mark">MK</span><strong>${state.siteSettings.brandName}</strong></div>
         <p>${state.siteSettings.brandAccent}. Çocukların eğlenerek öğrendiği, ebeveynlerin güvenle tercih ettiği aktivite rehberi.</p>
         <div class="social-row">
-          ${state.socialLinks.filter((link) => link.isActive).map((link) => `<a href="${link.url}" target="_blank" rel="noreferrer">${link.platform.slice(0, 2).toUpperCase()}</a>`).join("")}
+          ${state.socialLinks.filter((link) => link.isActive).map((link) => `<a class="${socialIcon(link.platform)}" href="${link.url}" target="_blank" rel="noreferrer" aria-label="${link.platform}"><span aria-hidden="true"></span></a>`).join("")}
         </div>
       </section>
       ${groups
