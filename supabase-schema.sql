@@ -50,6 +50,17 @@ create table if not exists public.children (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.admin_users (
+  email text primary key,
+  status public.record_status not null default 'active',
+  created_by uuid references public.profiles(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+
+insert into public.admin_users (email, status)
+values ('esinaykanat@gmail.com', 'active')
+on conflict (email) do update set status = excluded.status;
+
 create table if not exists public.vendors (
   id uuid primary key default gen_random_uuid(),
   name text not null,
@@ -250,8 +261,15 @@ create or replace function public.is_admin()
 returns boolean
 language sql
 stable
+security definer
+set search_path = public
 as $$
-  select coalesce(auth.jwt() ->> 'email', '') = 'esinaykanat@gmail.com';
+  select exists (
+    select 1
+    from public.admin_users au
+    where au.email = coalesce(auth.jwt() ->> 'email', '')
+      and au.status = 'active'
+  );
 $$;
 
 create or replace function public.handle_new_user()
@@ -342,6 +360,7 @@ on conflict (vendor_id, user_id) do nothing;
 
 alter table public.profiles enable row level security;
 alter table public.children enable row level security;
+alter table public.admin_users enable row level security;
 alter table public.vendors enable row level security;
 alter table public.vendor_users enable row level security;
 alter table public.categories enable row level security;
@@ -358,6 +377,11 @@ alter table public.subscription_plans enable row level security;
 drop policy if exists "profiles self or admin" on public.profiles;
 create policy "profiles self or admin" on public.profiles
 for select using (id = auth.uid() or public.is_admin());
+
+drop policy if exists "admin users admin access" on public.admin_users;
+create policy "admin users admin access" on public.admin_users
+for all using (public.is_admin())
+with check (public.is_admin());
 
 drop policy if exists "profiles booking vendor read" on public.profiles;
 create policy "profiles booking vendor read" on public.profiles
@@ -477,6 +501,11 @@ for select using (user_id = auth.uid() or public.is_admin() or exists (
 drop policy if exists "bookings parent create" on public.bookings;
 create policy "bookings parent create" on public.bookings
 for insert with check (user_id = auth.uid());
+
+drop policy if exists "bookings owner cancel" on public.bookings;
+create policy "bookings owner cancel" on public.bookings
+for update using (user_id = auth.uid())
+with check (user_id = auth.uid());
 
 drop policy if exists "booking participants owner access" on public.booking_participants;
 create policy "booking participants owner access" on public.booking_participants

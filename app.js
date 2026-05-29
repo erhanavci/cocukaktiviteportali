@@ -9,10 +9,12 @@ const state = {
   authProfile: null,
   vendorIds: [],
   adminPermissions: ["all"],
+  adminEmails: [ADMIN_EMAIL],
   notifications: [],
   readNotifications: new Set(),
   notificationOpen: false,
   authRedirecting: false,
+  autoRefreshTimer: null,
   supportTickets: [],
   categories: ["Oyun grubu", "Sanat atölyesi", "Spor", "Müzik", "Dans", "Drama", "Müze/gezi", "Bilim/STEM", "Doğa", "Ebeveyn-çocuk", "Tatil kampı", "Düzenli kurs"],
   authMode: "choice",
@@ -241,6 +243,7 @@ async function initSupabase() {
   const { data } = await state.supabaseClient.auth.getSession();
   if (data.session?.user) await setSupabaseUser(data.session.user);
   await loadMarketplaceData();
+  startAutoRefresh();
 
   state.supabaseClient.auth.onAuthStateChange(async (_event, session) => {
     await setSupabaseUser(session?.user ?? null);
@@ -267,7 +270,7 @@ async function setSupabaseUser(user) {
     full_name: user.user_metadata?.full_name ?? user.email,
   };
 
-  if (state.authProfile.role === "parent" || user.email === ADMIN_EMAIL) {
+  if (state.authProfile.role === "parent" || state.authProfile.role === "admin" || user.email === ADMIN_EMAIL) {
     const { data: children } = await state.supabaseClient
       .from("children")
       .select("id, name, age, interests")
@@ -284,7 +287,7 @@ async function setSupabaseUser(user) {
     }
   }
 
-  if (state.authProfile.role === "vendor" || user.email === ADMIN_EMAIL) {
+  if (state.authProfile.role === "vendor" || state.authProfile.role === "admin" || user.email === ADMIN_EMAIL) {
     const { data: vendorLinks } = await state.supabaseClient.from("vendor_users").select("vendor_id").eq("user_id", user.id);
     state.vendorIds = vendorLinks?.map((link) => link.vendor_id) ?? [];
     if (state.authProfile.role === "vendor" && !state.vendorIds.length) {
@@ -323,7 +326,7 @@ async function ensureVendorProfile(user) {
 }
 
 function isAdmin() {
-  return state.currentUser?.email === ADMIN_EMAIL;
+  return state.currentUser?.email === ADMIN_EMAIL || state.authProfile?.role === "admin" || state.adminEmails.includes(state.currentUser?.email);
 }
 
 function isVendor() {
@@ -507,6 +510,23 @@ async function loadMarketplaceData() {
   await loadFavoriteData();
   await loadBookingData();
   await loadSupportTickets();
+  await loadAdminUsers();
+}
+
+function startAutoRefresh() {
+  if (state.autoRefreshTimer) clearInterval(state.autoRefreshTimer);
+  state.autoRefreshTimer = setInterval(async () => {
+    if (!state.supabaseReady || !state.currentUser) return;
+    await loadMarketplaceData();
+    updateNav();
+    if (["admin", "vendor", "bookings", "support"].includes(state.route)) render();
+  }, 30000);
+}
+
+async function loadAdminUsers() {
+  if (!state.supabaseReady || !state.currentUser) return;
+  const { data, error } = await state.supabaseClient.from("admin_users").select("email").eq("status", "active");
+  if (!error && data) state.adminEmails = [...new Set([ADMIN_EMAIL, ...data.map((item) => item.email)])];
 }
 
 async function loadSupportTickets() {
@@ -875,7 +895,7 @@ function renderNotificationMenu() {
   const menu = document.createElement("div");
   menu.id = "notificationMenu";
   menu.className = "notification-menu";
-  const items = notificationItems();
+  const items = notificationItems().filter((item) => !state.readNotifications.has(item.id));
   menu.innerHTML = `
     <div class="panel-heading">
       <h3>Bildirimler</h3>
@@ -887,7 +907,7 @@ function renderNotificationMenu() {
           ? items
               .map(
                 (item) => `
-                  <button class="notification-item ${state.readNotifications.has(item.id) ? "read" : ""}" data-open-notification="${item.id}" data-notification-route="${item.route}" data-notification-tab="${item.tab}" data-notification-activity="${item.activityId}">
+                  <button class="notification-item" data-open-notification="${item.id}" data-notification-route="${item.route}" data-notification-tab="${item.tab}" data-notification-activity="${item.activityId}">
                     <strong>${item.text}</strong>
                     <span>${item.meta}</span>
                   </button>
@@ -917,6 +937,9 @@ function statusPill(status) {
     pending_payment: ["Ödeme bekliyor", "orange"],
     failed: ["Başarısız", "red"],
     refunded: ["İade edildi", "orange"],
+    cancelled_by_user: ["Kullanıcı iptal etti", "orange"],
+    cancelled_by_vendor: ["Satıcı iptal etti", "orange"],
+    cancelled_by_admin: ["Admin iptal etti", "orange"],
     answered: ["Yanıtlandı", "green"],
   };
   const [label, tone] = map[status] ?? [status, ""];
@@ -1555,8 +1578,33 @@ function bookingCard(booking) {
         <span class="tag">Katılımcı: ${childIds.length || 1}</span>
         <span class="tag">Tutar: ${money(booking.totalAmount)}</span>
       </div>
+      ${canCancelBooking(booking) ? `<button class="ghost-action danger-action" data-cancel-booking="${booking.id}">Rezervasyonu iptal et</button>` : ""}
     </article>
   `;
+}
+
+function canCancelBooking(booking) {
+  const found = getSession(booking.sessionId);
+  if (!found) return false;
+  const cancellableStatuses = ["confirmed", "pending_payment"];
+  return isParent() && cancellableStatuses.includes(booking.status) && new Date(found.session.start).getTime() - Date.now() >= 24 * 60 * 60 * 1000;
+}
+
+async function cancelBooking(id) {
+  const booking = state.bookings.find((item) => item.id === id);
+  if (!booking || !canCancelBooking(booking)) {
+    notify("Etkinliğe 24 saatten az kaldığı için iptal yapılamaz.");
+    return;
+  }
+  booking.status = "cancelled_by_user";
+  const found = getSession(booking.sessionId);
+  if (found) found.session.reserved = Math.max(0, found.session.reserved - (booking.participantCount || booking.childIds?.length || 1));
+  if (state.supabaseReady && isUuid(id)) {
+    const { error } = await state.supabaseClient.from("bookings").update({ status: "cancelled_by_user" }).eq("id", id);
+    if (error) notify(`İptal yerelde yapıldı; Supabase güncellenemedi: ${error.message}`);
+  }
+  notify("Rezervasyon iptal edildi.");
+  renderBookings();
 }
 
 function bookingParticipantSummary(booking) {
@@ -2158,12 +2206,13 @@ function renderAdmin() {
           </div>
           <button class="ghost-action" data-route="auth">Profili görüntüle</button>
           <button class="ghost-action danger-action" data-logout>Çıkış yap</button>
+          <button class="primary-action danger-action" data-logout>Admin çıkış</button>
           <span class="tag">PaymentProvider: DummyPOS</span>
         </div>
       </div>
       <div class="dashboard-layout">
         <nav class="side-tabs">
-          ${["approvals", "payments", "commissions", "categories", "support"].map((tab) => `<button class="tab-button ${state.adminTab === tab ? "active" : ""}" data-admin-tab="${tab}">${adminTabLabel(tab)}</button>`).join("")}
+          ${["approvals", "vendors", "admins", "payments", "commissions", "categories", "support"].map((tab) => `<button class="tab-button ${state.adminTab === tab ? "active" : ""}" data-admin-tab="${tab}">${adminTabLabel(tab)}</button>`).join("")}
         </nav>
         <div>${adminPanel()}</div>
       </div>
@@ -2172,7 +2221,7 @@ function renderAdmin() {
 }
 
 function adminTabLabel(tab) {
-  return { approvals: "Onaylar", payments: "Satılan etkinlikler", commissions: "Komisyonlar", categories: "Kategoriler", support: "Destek" }[tab];
+  return { approvals: "Onaylar", vendors: "Firmalar", admins: "Alt adminler", payments: "Satılan etkinlikler", commissions: "Komisyonlar", categories: "Kategoriler", support: "Destek" }[tab];
 }
 
 function adminPanel() {
@@ -2188,6 +2237,8 @@ function adminPanel() {
       </div>
     `;
   }
+  if (state.adminTab === "vendors") return adminVendorsPanel();
+  if (state.adminTab === "admins") return adminUsersPanel();
   if (state.adminTab === "payments") return adminPaymentTable();
   if (state.adminTab === "commissions") return adminCommissionTable();
   if (state.adminTab === "categories") {
@@ -2230,6 +2281,51 @@ function adminPanel() {
                 .join("")
             : `<div class="empty-state">Henüz destek talebi yok.</div>`
         }
+      </div>
+    </div>
+  `;
+}
+
+function adminVendorsPanel() {
+  return `
+    <div class="panel">
+      <h3>Firmalar</h3>
+      <div class="sessions">
+        ${
+          state.vendors.length
+            ? state.vendors
+                .map(
+                  (vendor) => `
+                    <div class="mini-card child-card">
+                      <div>
+                        <strong>${vendor.name}</strong>
+                        <p class="muted">${vendor.district} · ${vendor.plan} · ${statusPill(vendor.status)}</p>
+                      </div>
+                      <div class="button-row">
+                        ${vendor.status !== "approved" ? `<button class="primary-action" data-approve-vendor="${vendor.id}">Onayla</button>` : ""}
+                        ${vendor.status !== "blocked" ? `<button class="ghost-action danger-action" data-block-vendor="${vendor.id}">Sistemden çıkar</button>` : `<button class="ghost-action" data-approve-vendor="${vendor.id}">Tekrar aktifleştir</button>`}
+                      </div>
+                    </div>
+                  `,
+                )
+                .join("")
+            : `<div class="empty-state">Firma kaydı yok.</div>`
+        }
+      </div>
+    </div>
+  `;
+}
+
+function adminUsersPanel() {
+  return `
+    <div class="panel">
+      <h3>Alt adminler</h3>
+      <form id="adminUserForm" class="form-grid">
+        <label class="wide"><span>E-posta</span><input name="email" type="email" required placeholder="yonetici@mail.com" /></label>
+        <button class="primary-action wide" type="submit">Admin yetkisi ver</button>
+      </form>
+      <div class="sessions">
+        ${state.adminEmails.map((email) => `<div class="mini-card child-card"><strong>${email}</strong><span class="tag">admin</span></div>`).join("")}
       </div>
     </div>
   `;
@@ -2329,6 +2425,28 @@ async function approveVendor(id) {
   }
   state.notifications.unshift({ text: "Firma onaylandı.", read: false });
   notify("Firma onaylandı ve public yayına hazır.");
+  renderAdmin();
+}
+
+async function blockVendor(id) {
+  const vendor = state.vendors.find((item) => item.id === id);
+  if (vendor) vendor.status = "blocked";
+  if (state.supabaseReady && isUuid(id)) {
+    await state.supabaseClient.from("vendors").update({ status: "blocked" }).eq("id", id);
+  }
+  notify("Firma sistemden çıkarıldı.");
+  renderAdmin();
+}
+
+async function addAdminUser(form) {
+  const email = String(new FormData(form).get("email") || "").trim().toLowerCase();
+  if (!email) return;
+  if (!state.adminEmails.includes(email)) state.adminEmails.push(email);
+  if (state.supabaseReady) {
+    await state.supabaseClient.from("admin_users").upsert({ email, status: "active", created_by: state.currentUser.id });
+    await state.supabaseClient.from("profiles").update({ role: "admin", status: "active" }).eq("email", email);
+  }
+  notify(`${email} admin olarak yetkilendirildi.`);
   renderAdmin();
 }
 
@@ -2655,6 +2773,9 @@ document.addEventListener("click", (event) => {
   if (target.dataset.approveVendor) {
     approveVendor(target.dataset.approveVendor);
   }
+  if (target.dataset.blockVendor) {
+    blockVendor(target.dataset.blockVendor);
+  }
   if (target.dataset.approveActivity) {
     approveActivity(target.dataset.approveActivity);
   }
@@ -2664,6 +2785,7 @@ document.addEventListener("click", (event) => {
     notify("İade süreci başlatıldı; komisyon ters kaydı simüle edildi.");
     renderAdmin();
   }
+  if (target.dataset.cancelBooking) cancelBooking(target.dataset.cancelBooking);
   if (target.dataset.notify) notify(target.dataset.notify);
   if (target.hasAttribute("data-logout")) handleLogout();
   if (target.dataset.authMode) {
@@ -2702,6 +2824,7 @@ document.addEventListener("submit", async (event) => {
   if (event.target.id === "bookingForm") await createBooking(event.target);
   if (event.target.id === "activityForm") await createActivity(event.target);
   if (event.target.id === "vendorProfileForm") await updateVendorProfile(event.target);
+  if (event.target.id === "adminUserForm") await addAdminUser(event.target);
   if (event.target.id === "loginForm") await handleLogin(event.target);
   if (event.target.id === "signupForm") await handleSignup(event.target);
   if (event.target.id === "childForm") await handleChildCreate(event.target);
