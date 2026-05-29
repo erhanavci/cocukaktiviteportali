@@ -16,6 +16,11 @@ const state = {
   notificationOpen: false,
   authRedirecting: false,
   autoRefreshTimer: null,
+  messageRefreshTimer: null,
+  knownNotificationIds: new Set(),
+  notificationBaselineReady: false,
+  soundUnlocked: false,
+  audioContext: null,
   supportTickets: [],
   vendorExpenses: [],
   vendorMessages: [],
@@ -254,10 +259,19 @@ async function initSupabase() {
   if (data.session?.user) await setSupabaseUser(data.session.user);
   await loadMarketplaceData();
   startAutoRefresh();
+  updateNav();
 
   state.supabaseClient.auth.onAuthStateChange(async (_event, session) => {
     await setSupabaseUser(session?.user ?? null);
     await loadMarketplaceData();
+    if (session?.user) {
+      startAutoRefresh();
+    } else {
+      if (state.autoRefreshTimer) clearInterval(state.autoRefreshTimer);
+      if (state.messageRefreshTimer) clearInterval(state.messageRefreshTimer);
+      state.autoRefreshTimer = null;
+      state.messageRefreshTimer = null;
+    }
     if (session?.user && state.authRedirecting) {
       state.route = "home";
       state.authRedirecting = false;
@@ -479,6 +493,49 @@ function unreadCount() {
   return notificationItems().filter((item) => !state.readNotifications.has(item.id)).length;
 }
 
+function unreadNotificationIds() {
+  return new Set(notificationItems().filter((item) => !state.readNotifications.has(item.id)).map((item) => item.id));
+}
+
+function unlockNotificationSound() {
+  if (state.soundUnlocked) return;
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return;
+  state.audioContext = state.audioContext || new AudioContextClass();
+  state.audioContext.resume?.();
+  state.soundUnlocked = true;
+}
+
+function playBlip() {
+  try {
+    unlockNotificationSound();
+    const context = state.audioContext;
+    if (!context) return;
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(880, context.currentTime);
+    oscillator.frequency.exponentialRampToValueAtTime(1320, context.currentTime + 0.08);
+    gain.gain.setValueAtTime(0.0001, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.12, context.currentTime + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.16);
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start();
+    oscillator.stop(context.currentTime + 0.18);
+  } catch {
+    // Browsers can block audio before the first user gesture; silently skip in that case.
+  }
+}
+
+function syncNotificationAlerts() {
+  const nextIds = unreadNotificationIds();
+  const hasNew = [...nextIds].some((id) => !state.knownNotificationIds.has(id));
+  if (state.notificationBaselineReady && hasNew) playBlip();
+  state.knownNotificationIds = nextIds;
+  state.notificationBaselineReady = true;
+}
+
 function currentVendor() {
   if (state.vendorIds.length) return state.vendors.find((vendor) => vendor.id === state.vendorIds[0]) ?? null;
   if (!state.supabaseReady && isVendor()) return state.vendors[0] ?? null;
@@ -645,6 +702,22 @@ function startAutoRefresh() {
     await loadMarketplaceData();
     updateNav();
   }, 30000);
+  startMessageRefresh();
+}
+
+function startMessageRefresh() {
+  if (state.messageRefreshTimer) clearInterval(state.messageRefreshTimer);
+  state.messageRefreshTimer = setInterval(refreshVendorMessages, 1000);
+}
+
+async function refreshVendorMessages() {
+  if (!state.supabaseReady || !state.currentUser || (!isVendor() && !isAdmin())) return;
+  const activeForm = document.activeElement?.closest?.("#vendorMessageForm");
+  await loadVendorMessages();
+  updateNav();
+  if (activeForm) return;
+  if (isVendor() && state.route === "vendor" && state.vendorTab === "messages") renderVendor();
+  if (isAdmin() && state.route === "admin" && state.adminTab === "messages") renderAdmin();
 }
 
 async function loadAdminUsers() {
@@ -1046,6 +1119,7 @@ function updateNav() {
   });
   notificationButton?.classList.toggle("active", state.notificationOpen);
   renderNotificationMenu();
+  syncNotificationAlerts();
 }
 
 function renderNotificationMenu() {
@@ -3278,12 +3352,16 @@ async function handleSignup(form) {
 async function handleLogout() {
   const client = state.supabaseReady ? state.supabaseClient : null;
   if (state.autoRefreshTimer) clearInterval(state.autoRefreshTimer);
+  if (state.messageRefreshTimer) clearInterval(state.messageRefreshTimer);
   state.autoRefreshTimer = null;
+  state.messageRefreshTimer = null;
   state.currentUser = null;
   state.authProfile = null;
   state.vendorIds = [];
   state.favorites = new Set();
   state.readNotifications = new Set();
+  state.knownNotificationIds = new Set();
+  state.notificationBaselineReady = false;
   state.notificationOpen = false;
   state.authMode = "choice";
   state.editingChildId = null;
@@ -3402,6 +3480,7 @@ async function toggleFavorite(activityId) {
 }
 
 document.addEventListener("click", async (event) => {
+  unlockNotificationSound();
   const target = event.target.closest("button, a");
   if (!target) return;
 
