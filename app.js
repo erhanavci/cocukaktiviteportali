@@ -1315,7 +1315,7 @@ function renderHome() {
   const heroText = app.querySelector(".hero-copy");
   const aboutTitle = app.querySelector(".about-content h2");
   const aboutText = app.querySelector(".about-content > p:not(.eyebrow)");
-  if (heroTitle) heroTitle.textContent = state.siteSettings.heroTitle;
+  if (heroTitle) heroTitle.innerHTML = heroTitleMarkup(state.siteSettings.heroTitle);
   if (heroText) heroText.textContent = state.siteSettings.heroText;
   if (aboutTitle) aboutTitle.textContent = state.siteSettings.aboutTitle;
   if (aboutText) aboutText.textContent = state.siteSettings.aboutText;
@@ -1327,6 +1327,14 @@ function renderHome() {
   renderActivityGrid(activities);
   setupHeroSearch();
   setupParallaxDots();
+}
+
+function heroTitleMarkup(title) {
+  const normalized = String(title || "").trim();
+  if (normalized === "Çocuğunuz için eğlenceli ve eğitici dünyayı keşfedin.") {
+    return "Çocuğunuz İçin <br><span>Eğlenceli &amp; Eğitici</span><br>Dünyayı Keşfedin";
+  }
+  return normalized.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#039;" })[char]);
 }
 
 function renderCategoryShowcase() {
