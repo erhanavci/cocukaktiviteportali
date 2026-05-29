@@ -18,6 +18,8 @@ const state = {
   autoRefreshTimer: null,
   supportTickets: [],
   vendorExpenses: [],
+  vendorMessages: [],
+  selectedMessageVendorId: null,
   categories: ["Oyun grubu", "Sanat atölyesi", "Spor", "Müzik", "Dans", "Drama", "Müze/gezi", "Bilim/STEM", "Doğa", "Ebeveyn-çocuk", "Tatil kampı", "Düzenli kurs"],
   authMode: "choice",
   signupRole: "parent",
@@ -382,6 +384,17 @@ function notificationItems() {
   }));
 
   if (isAdmin()) {
+    state.vendorMessages
+      .filter((message) => message.senderRole === "vendor" && !message.readByAdmin)
+      .forEach((message) =>
+        items.push({
+          id: `admin-message-${message.id}`,
+          text: `${message.vendorName || "Satıcı"} yeni mesaj gönderdi`,
+          meta: "Satıcı mesajları",
+          route: "admin",
+          tab: "messages",
+        }),
+      );
     state.vendors
       .filter((vendor) => vendor.status === "pending")
       .forEach((vendor) =>
@@ -410,6 +423,17 @@ function notificationItems() {
   if (isVendor()) {
     const vendor = currentVendor();
     const vendorActivities = state.activities.filter((activity) => activity.vendorId === vendor?.id);
+    state.vendorMessages
+      .filter((message) => message.vendorId === vendor?.id && message.senderRole === "admin" && !message.readByVendor)
+      .forEach((message) =>
+        items.push({
+          id: `vendor-message-${message.id}`,
+          text: "Admin yeni mesaj gönderdi",
+          meta: "Mesajlar",
+          route: "vendor",
+          tab: "messages",
+        }),
+      );
     vendorActivities.forEach((activity) => {
       const count = favoriteCount(activity.id);
       if (count > 0) {
@@ -543,6 +567,7 @@ async function loadMarketplaceData() {
   await loadReviewData();
   await loadSupportTickets();
   await loadVendorExpenses();
+  await loadVendorMessages();
   await loadAdminUsers();
 }
 
@@ -587,6 +612,28 @@ async function loadVendorExpenses() {
       expenseDate: expense.expense_date,
       vendorName: expense.vendor?.name || "",
       createdAt: expense.created_at,
+    }));
+  }
+}
+
+async function loadVendorMessages() {
+  if (!state.supabaseReady || !state.currentUser || (!isVendor() && !isAdmin())) return;
+  const { data, error } = await state.supabaseClient
+    .from("vendor_messages")
+    .select("*, vendor:vendors(name), sender:profiles(full_name, email)")
+    .order("created_at", { ascending: true });
+  if (!error && data) {
+    state.vendorMessages = data.map((message) => ({
+      id: message.id,
+      vendorId: message.vendor_id,
+      vendorName: message.vendor?.name || "",
+      senderId: message.sender_id,
+      senderName: message.sender?.full_name || message.sender?.email || "",
+      senderRole: message.sender_role,
+      body: message.body,
+      readByAdmin: Boolean(message.read_by_admin),
+      readByVendor: Boolean(message.read_by_vendor),
+      createdAt: message.created_at,
     }));
   }
 }
@@ -1987,7 +2034,7 @@ function renderVendor() {
       </div>
       <div class="dashboard-layout">
         <nav class="side-tabs">
-          ${["overview", "profile", "activities", "calendar", "bookings", "revenue", "new"].map((tab) => `<button class="tab-button ${state.vendorTab === tab ? "active" : ""}" data-vendor-tab="${tab}">${vendorTabLabel(tab)}</button>`).join("")}
+          ${["overview", "profile", "activities", "calendar", "bookings", "revenue", "messages", "new"].map((tab) => `<button class="tab-button ${state.vendorTab === tab ? "active" : ""}" data-vendor-tab="${tab}">${vendorTabLabel(tab)}</button>`).join("")}
         </nav>
         <div>${vendorPanel(vendor, vendorActivities, bookings)}</div>
       </div>
@@ -2002,6 +2049,7 @@ function vendorTabLabel(tab) {
     calendar: "Takvim",
     bookings: "Rezervasyonlar",
     revenue: "Gelirler",
+    messages: "Mesajlar",
     profile: "Firma profili",
     new: "Yeni etkinlik",
   }[tab];
@@ -2028,6 +2076,7 @@ function vendorPanel(vendor, activities, bookings) {
   if (state.vendorTab === "calendar") return calendarPanel(activities);
   if (state.vendorTab === "bookings") return bookingTable(bookings);
   if (state.vendorTab === "revenue") return revenuePanel(bookings);
+  if (state.vendorTab === "messages") return vendorMessagesPanel(vendor);
   if (state.vendorTab === "profile") return vendorProfileEditPanel(vendor);
   return newActivityForm(vendor);
 }
@@ -2178,6 +2227,93 @@ function revenuePanel(bookings) {
         </table>
       </div>
     </div>
+  `;
+}
+
+function conversationMessages(vendorId) {
+  return state.vendorMessages.filter((message) => message.vendorId === vendorId);
+}
+
+function unreadConversationCount(vendorId, role) {
+  return conversationMessages(vendorId).filter((message) =>
+    role === "admin" ? message.senderRole === "vendor" && !message.readByAdmin : message.senderRole === "admin" && !message.readByVendor,
+  ).length;
+}
+
+function vendorMessagesPanel(vendor) {
+  setTimeout(() => markConversationRead(vendor.id), 0);
+  return `
+    <div class="panel">
+      <div class="panel-heading">
+        <div>
+          <h3>Admin mesajları</h3>
+          <p class="muted">Admin ekibiyle hızlı operasyon görüşmesi.</p>
+        </div>
+      </div>
+      ${messageThread(vendor.id)}
+    </div>
+  `;
+}
+
+function adminMessagesPanel() {
+  const selectedVendor = state.vendors.find((vendor) => vendor.id === state.selectedMessageVendorId) || state.vendors[0];
+  if (selectedVendor && state.selectedMessageVendorId !== selectedVendor.id) state.selectedMessageVendorId = selectedVendor.id;
+  if (selectedVendor) setTimeout(() => markConversationRead(selectedVendor.id), 0);
+  return `
+    <div class="messages-layout">
+      <aside class="panel conversation-list">
+        <h3>Satıcılar</h3>
+        ${state.vendors
+          .map((vendor) => {
+            const messages = conversationMessages(vendor.id);
+            const lastMessage = messages[messages.length - 1];
+            const unread = unreadConversationCount(vendor.id, "admin");
+            return `
+              <button class="conversation-item ${selectedVendor?.id === vendor.id ? "active" : ""}" data-open-vendor-chat="${vendor.id}">
+                <strong>${vendor.name}</strong>
+                <span>${lastMessage?.body || "Henüz mesaj yok"}</span>
+                ${unread ? `<b>${unread}</b>` : ""}
+              </button>
+            `;
+          })
+          .join("")}
+      </aside>
+      <section class="panel">
+        ${
+          selectedVendor
+            ? `<div class="panel-heading"><div><h3>${selectedVendor.name}</h3><p class="muted">Satıcı mesajlaşması</p></div>${statusPill(selectedVendor.status)}</div>${messageThread(selectedVendor.id)}`
+            : `<div class="empty-state">Mesajlaşma için firma yok.</div>`
+        }
+      </section>
+    </div>
+  `;
+}
+
+function messageThread(vendorId) {
+  const messages = conversationMessages(vendorId);
+  return `
+    <div class="message-thread">
+      ${
+        messages.length
+          ? messages
+              .map(
+                (message) => `
+                  <div class="chat-bubble ${message.senderRole === (isAdmin() ? "admin" : "vendor") ? "mine" : ""}">
+                    <strong>${message.senderRole === "admin" ? "Admin" : message.senderName || getVendor(message.vendorId)?.name || "Satıcı"}</strong>
+                    <p>${message.body}</p>
+                    <span>${dateTime(message.createdAt)}</span>
+                  </div>
+                `,
+              )
+              .join("")
+          : `<div class="empty-state">Henüz mesaj yok. İlk mesajı yazabilirsiniz.</div>`
+      }
+    </div>
+    <form id="vendorMessageForm" class="message-form">
+      <input type="hidden" name="vendorId" value="${vendorId}" />
+      <textarea name="body" required placeholder="Mesaj yazın"></textarea>
+      <button class="primary-action" type="submit">Gönder</button>
+    </form>
   `;
 }
 
@@ -2609,6 +2745,92 @@ async function deleteVendorExpense(id) {
   renderVendor();
 }
 
+async function sendVendorMessage(form) {
+  const data = new FormData(form);
+  const vendorId = String(data.get("vendorId") || "");
+  const body = String(data.get("body") || "").trim();
+  if (!vendorId || !body) return;
+  const vendor = getVendor(vendorId);
+  const senderRole = isAdmin() ? "admin" : "vendor";
+  const message = {
+    id: `msg-${Date.now()}`,
+    vendorId,
+    vendorName: vendor?.name || "",
+    senderId: state.currentUser?.id || "",
+    senderName: state.authProfile?.full_name || state.currentUser?.email || "",
+    senderRole,
+    body,
+    readByAdmin: senderRole === "admin",
+    readByVendor: senderRole === "vendor",
+    createdAt: new Date().toISOString(),
+  };
+  state.vendorMessages.push(message);
+  form.reset();
+  notify("Mesaj gönderildi.");
+  isAdmin() ? renderAdmin() : renderVendor();
+
+  if (state.supabaseReady && isUuid(vendorId)) {
+    const { data: savedMessage, error } = await state.supabaseClient
+      .from("vendor_messages")
+      .insert({
+        vendor_id: vendorId,
+        sender_id: state.currentUser.id,
+        sender_role: senderRole,
+        body,
+        read_by_admin: senderRole === "admin",
+        read_by_vendor: senderRole === "vendor",
+      })
+      .select("*, vendor:vendors(name), sender:profiles(full_name, email)")
+      .single();
+    if (error) {
+      notify(`Mesaj yerelde gönderildi; Supabase kaydı başarısız: ${error.message}`);
+      return;
+    }
+    if (savedMessage) {
+      state.vendorMessages = state.vendorMessages.filter((item) => item.id !== message.id);
+      state.vendorMessages.push({
+        id: savedMessage.id,
+        vendorId: savedMessage.vendor_id,
+        vendorName: savedMessage.vendor?.name || "",
+        senderId: savedMessage.sender_id,
+        senderName: savedMessage.sender?.full_name || savedMessage.sender?.email || "",
+        senderRole: savedMessage.sender_role,
+        body: savedMessage.body,
+        readByAdmin: Boolean(savedMessage.read_by_admin),
+        readByVendor: Boolean(savedMessage.read_by_vendor),
+        createdAt: savedMessage.created_at,
+      });
+    }
+  }
+
+  isAdmin() ? renderAdmin() : renderVendor();
+}
+
+async function markConversationRead(vendorId) {
+  if (!vendorId || !state.currentUser) return;
+  const role = isAdmin() ? "admin" : isVendor() ? "vendor" : "";
+  if (!role) return;
+  let changed = false;
+  state.vendorMessages = state.vendorMessages.map((message) => {
+    if (message.vendorId !== vendorId) return message;
+    if (role === "admin" && message.senderRole === "vendor" && !message.readByAdmin) {
+      changed = true;
+      return { ...message, readByAdmin: true };
+    }
+    if (role === "vendor" && message.senderRole === "admin" && !message.readByVendor) {
+      changed = true;
+      return { ...message, readByVendor: true };
+    }
+    return message;
+  });
+  if (!changed) return;
+  updateNav();
+  if (state.supabaseReady && isUuid(vendorId)) {
+    const column = role === "admin" ? "read_by_admin" : "read_by_vendor";
+    await state.supabaseClient.from("vendor_messages").update({ [column]: true }).eq("vendor_id", vendorId).neq("sender_role", role);
+  }
+}
+
 function removeGalleryImage(encodedUrl) {
   const activity = state.activities.find((item) => item.id === state.editingActivityId);
   if (!activity) return;
@@ -2681,7 +2903,7 @@ function renderAdmin() {
       </div>
       <div class="dashboard-layout">
         <nav class="side-tabs">
-          ${["approvals", "vendors", "admins", "payments", "commissions", "categories", "support"].map((tab) => `<button class="tab-button ${state.adminTab === tab ? "active" : ""}" data-admin-tab="${tab}">${adminTabLabel(tab)}</button>`).join("")}
+          ${["approvals", "vendors", "messages", "admins", "payments", "commissions", "categories", "support"].map((tab) => `<button class="tab-button ${state.adminTab === tab ? "active" : ""}" data-admin-tab="${tab}">${adminTabLabel(tab)}</button>`).join("")}
         </nav>
         <div>${adminPanel()}</div>
       </div>
@@ -2690,7 +2912,7 @@ function renderAdmin() {
 }
 
 function adminTabLabel(tab) {
-  return { approvals: "Onaylar", vendors: "Firmalar", admins: "Alt adminler", payments: "Satılan etkinlikler", commissions: "Komisyonlar", categories: "Kategoriler", support: "Destek" }[tab];
+  return { approvals: "Onaylar", vendors: "Firmalar", messages: "Satıcı mesajları", admins: "Alt adminler", payments: "Satılan etkinlikler", commissions: "Komisyonlar", categories: "Kategoriler", support: "Destek" }[tab];
 }
 
 function adminPanel() {
@@ -2707,6 +2929,7 @@ function adminPanel() {
     `;
   }
   if (state.adminTab === "vendors") return adminVendorsPanel();
+  if (state.adminTab === "messages") return adminMessagesPanel();
   if (state.adminTab === "admins") return adminUsersPanel();
   if (state.adminTab === "payments") return adminPaymentTable();
   if (state.adminTab === "commissions") return adminCommissionTable();
@@ -3065,6 +3288,7 @@ async function handleLogout() {
   state.authMode = "choice";
   state.editingChildId = null;
   state.editingExpenseId = null;
+  state.selectedMessageVendorId = null;
   notify("Çıkış yapıldı.");
   setRoute("home");
   if (client) await client.auth.signOut();
@@ -3213,6 +3437,11 @@ document.addEventListener("click", async (event) => {
     state.editingExpenseId = null;
     renderVendor();
   }
+  if (target.dataset.openVendorChat) {
+    state.selectedMessageVendorId = target.dataset.openVendorChat;
+    state.adminTab = "messages";
+    renderAdmin();
+  }
   if (target.hasAttribute("data-new-activity")) {
     state.editingActivityId = null;
     state.vendorTab = "new";
@@ -3315,6 +3544,7 @@ document.addEventListener("submit", async (event) => {
   if (event.target.id === "activityForm") await createActivity(event.target);
   if (event.target.id === "vendorProfileForm") await updateVendorProfile(event.target);
   if (event.target.id === "expenseForm") await saveVendorExpense(event.target);
+  if (event.target.id === "vendorMessageForm") await sendVendorMessage(event.target);
   if (event.target.id === "adminUserForm") await addAdminUser(event.target);
   if (event.target.id === "loginForm") await handleLogin(event.target);
   if (event.target.id === "signupForm") await handleSignup(event.target);

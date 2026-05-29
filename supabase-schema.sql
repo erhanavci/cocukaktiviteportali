@@ -187,6 +187,17 @@ create table if not exists public.vendor_expenses (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.vendor_messages (
+  id uuid primary key default gen_random_uuid(),
+  vendor_id uuid not null references public.vendors(id) on delete cascade,
+  sender_id uuid not null references public.profiles(id) on delete cascade,
+  sender_role public.user_role not null check (sender_role in ('vendor', 'admin')),
+  body text not null,
+  read_by_admin boolean not null default false,
+  read_by_vendor boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
 create table if not exists public.favorites (
   user_id uuid not null references public.profiles(id) on delete cascade,
   activity_id uuid not null references public.activities(id) on delete cascade,
@@ -399,6 +410,7 @@ alter table public.booking_participants enable row level security;
 alter table public.payments enable row level security;
 alter table public.commissions enable row level security;
 alter table public.vendor_expenses enable row level security;
+alter table public.vendor_messages enable row level security;
 alter table public.favorites enable row level security;
 alter table public.activity_reviews enable row level security;
 alter table public.support_tickets enable row level security;
@@ -649,6 +661,38 @@ for all using (public.is_admin() or exists (
 with check (public.is_admin() or exists (
   select 1 from public.vendor_users vu
   where vu.vendor_id = vendor_expenses.vendor_id and vu.user_id = auth.uid()
+));
+
+drop policy if exists "vendor messages owner admin read" on public.vendor_messages;
+create policy "vendor messages owner admin read" on public.vendor_messages
+for select using (public.is_admin() or exists (
+  select 1 from public.vendor_users vu
+  where vu.vendor_id = vendor_messages.vendor_id and vu.user_id = auth.uid()
+));
+
+drop policy if exists "vendor messages owner admin create" on public.vendor_messages;
+create policy "vendor messages owner admin create" on public.vendor_messages
+for insert with check (
+  sender_id = auth.uid()
+  and (
+    (public.is_admin() and sender_role = 'admin')
+    or
+    (sender_role = 'vendor' and exists (
+      select 1 from public.vendor_users vu
+      where vu.vendor_id = vendor_messages.vendor_id and vu.user_id = auth.uid()
+    ))
+  )
+);
+
+drop policy if exists "vendor messages owner admin update read flags" on public.vendor_messages;
+create policy "vendor messages owner admin update read flags" on public.vendor_messages
+for update using (public.is_admin() or exists (
+  select 1 from public.vendor_users vu
+  where vu.vendor_id = vendor_messages.vendor_id and vu.user_id = auth.uid()
+))
+with check (public.is_admin() or exists (
+  select 1 from public.vendor_users vu
+  where vu.vendor_id = vendor_messages.vendor_id and vu.user_id = auth.uid()
 ));
 
 drop policy if exists "plans readable" on public.subscription_plans;
