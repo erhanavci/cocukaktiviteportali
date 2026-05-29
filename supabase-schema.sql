@@ -182,6 +182,18 @@ create table if not exists public.favorites (
   primary key (user_id, activity_id)
 );
 
+create table if not exists public.activity_reviews (
+  id uuid primary key default gen_random_uuid(),
+  activity_id uuid not null references public.activities(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  booking_id uuid references public.bookings(id) on delete set null,
+  rating int not null check (rating between 1 and 5),
+  comment text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (activity_id, user_id)
+);
+
 create table if not exists public.support_tickets (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles(id) on delete cascade,
@@ -373,6 +385,7 @@ alter table public.booking_participants enable row level security;
 alter table public.payments enable row level security;
 alter table public.commissions enable row level security;
 alter table public.favorites enable row level security;
+alter table public.activity_reviews enable row level security;
 alter table public.support_tickets enable row level security;
 alter table public.subscription_plans enable row level security;
 
@@ -559,6 +572,30 @@ for select using (public.is_admin() or exists (
   join public.vendor_users vu on vu.vendor_id = a.vendor_id
   where a.id = favorites.activity_id and vu.user_id = auth.uid()
 ));
+
+drop policy if exists "activity reviews public read" on public.activity_reviews;
+create policy "activity reviews public read" on public.activity_reviews
+for select using (true);
+
+drop policy if exists "activity reviews purchased create" on public.activity_reviews;
+create policy "activity reviews purchased create" on public.activity_reviews
+for insert with check (
+  user_id = auth.uid()
+  and exists (
+    select 1
+    from public.bookings b
+    join public.activity_sessions s on s.id = b.session_id
+    where b.id = activity_reviews.booking_id
+      and b.user_id = auth.uid()
+      and s.activity_id = activity_reviews.activity_id
+      and b.status in ('confirmed', 'pending_payment')
+  )
+);
+
+drop policy if exists "activity reviews owner update" on public.activity_reviews;
+create policy "activity reviews owner update" on public.activity_reviews
+for update using (user_id = auth.uid())
+with check (user_id = auth.uid());
 
 drop policy if exists "support tickets owner admin read" on public.support_tickets;
 create policy "support tickets owner admin read" on public.support_tickets

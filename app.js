@@ -3,6 +3,7 @@ const ADMIN_EMAIL = "esinaykanat@gmail.com";
 const state = {
   route: "home",
   selectedActivityId: null,
+  selectedVendorId: null,
   vendorTab: "overview",
   adminTab: "approvals",
   currentUser: null,
@@ -27,6 +28,7 @@ const state = {
   favorites: new Set(["act-art-1"]),
   favoriteCounts: { "act-art-1": 1 },
   bookings: [],
+  reviews: [],
   vendors: [
     {
       id: "ven-1",
@@ -358,6 +360,15 @@ function userInitials() {
     .join("");
 }
 
+function initials(source = "?") {
+  return String(source)
+    .split(/[ @.]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("");
+}
+
 function notificationItems() {
   const items = state.notifications.map((item, index) => ({
     id: item.id || `local-${index}-${item.text}`,
@@ -514,8 +525,28 @@ async function loadMarketplaceData() {
 
   await loadFavoriteData();
   await loadBookingData();
+  await loadReviewData();
   await loadSupportTickets();
   await loadAdminUsers();
+}
+
+async function loadReviewData() {
+  if (!state.supabaseReady) return;
+  const { data, error } = await state.supabaseClient
+    .from("activity_reviews")
+    .select("*, user:profiles(full_name, email)")
+    .order("created_at", { ascending: false });
+  if (!error && data) {
+    state.reviews = data.map((review) => ({
+      id: review.id,
+      activityId: review.activity_id,
+      userId: review.user_id,
+      rating: Number(review.rating),
+      comment: review.comment || "",
+      author: review.user?.full_name || review.user?.email || "Kullanıcı",
+      createdAt: review.created_at,
+    }));
+  }
 }
 
 function startAutoRefresh() {
@@ -591,6 +622,7 @@ async function loadBookingData() {
       const commissionRate = vendor?.commissionRate ?? 0.12;
       return {
         id: booking.id,
+        userId: booking.user_id,
         activityId: found.activity.id,
         sessionId: booking.session_id,
         childId: booking.participants?.[0]?.child_id ?? "",
@@ -659,6 +691,39 @@ function remainingLabel(activity) {
   const remaining = activity.sessions.reduce((sum, session) => sum + Math.max(0, session.capacity - session.reserved), 0);
   if (activity.participationType === "private") return remaining > 0 ? "Bire bir uygun" : "Bire bir dolu";
   return `${remaining} kişilik yer kaldı`;
+}
+
+function activityReviews(activityId) {
+  return state.reviews.filter((review) => review.activityId === activityId);
+}
+
+function ratingSummary(activityId) {
+  const reviews = activityReviews(activityId);
+  if (!reviews.length) return { count: 0, average: 0 };
+  const total = reviews.reduce((sum, review) => sum + Number(review.rating || 0), 0);
+  return { count: reviews.length, average: total / reviews.length };
+}
+
+function starText(rating) {
+  const value = Math.max(0, Math.min(5, Math.round(Number(rating) || 0)));
+  return `${"★★★★★".slice(0, value)}${"☆☆☆☆☆".slice(0, 5 - value)}`;
+}
+
+function purchasedBookingForActivity(activityId) {
+  if (!state.currentUser || !isParent()) return null;
+  return state.bookings.find((booking) => {
+    const isOwner = !booking.userId || booking.userId === state.currentUser.id;
+    return isOwner && booking.activityId === activityId && ["confirmed", "pending_payment"].includes(booking.status);
+  });
+}
+
+function userCanReview(activityId) {
+  return Boolean(purchasedBookingForActivity(activityId));
+}
+
+function userReviewForActivity(activityId) {
+  if (!state.currentUser) return null;
+  return state.reviews.find((review) => review.activityId === activityId && review.userId === state.currentUser.id) ?? null;
 }
 
 function favoriteCount(activityId) {
@@ -756,7 +821,8 @@ function syncPathForRoute(route) {
 
 function setRoute(route, id) {
   state.route = route;
-  state.selectedActivityId = id ?? state.selectedActivityId;
+  if (route === "detail") state.selectedActivityId = id ?? state.selectedActivityId;
+  if (route === "vendorDetail") state.selectedVendorId = id ?? state.selectedVendorId;
   state.notificationOpen = false;
   document.querySelector(".primary-nav")?.classList.remove("open");
   syncPathForRoute(route);
@@ -975,6 +1041,7 @@ function render() {
 
   if (state.route === "home") renderHome();
   if (state.route === "detail") renderDetail();
+  if (state.route === "vendorDetail") renderVendorDetail();
   if (state.route === "auth") renderAuth();
   if (state.route === "bookings") renderBookings();
   if (state.route === "vendor") renderVendor();
@@ -1268,7 +1335,8 @@ function renderActivityGrid(activities) {
 
   grid.innerHTML = activities
     .map((activity) => {
-      const vendor = getVendor(activity.vendorId);
+      const vendor = getVendor(activity.vendorId) || { id: activity.vendorId, name: "Firma" };
+      const summary = ratingSummary(activity.id);
       return `
         <article class="activity-card">
           <div class="activity-visual" style="${activity.imageUrl ? `--image:url('${activity.imageUrl}')` : `--visual:${activity.visual}`}">
@@ -1283,7 +1351,11 @@ function renderActivityGrid(activities) {
               <span class="tag">${remainingLabel(activity)}</span>
             </div>
             <h3>${activity.title}</h3>
-            <p class="muted">${vendor.name} · ${activity.type}</p>
+            <p class="muted">Düzenleyen <button class="text-link" data-vendor-detail="${vendor.id}">${vendor.name}</button> · ${activity.type}</p>
+            <div class="review-summary">
+              <span class="stars">${summary.count ? starText(summary.average) : "☆☆☆☆☆"}</span>
+              <span>${summary.count ? `${summary.average.toFixed(1)} / 5 · ${summary.count} yorum` : "Henüz yorum yok"}</span>
+            </div>
             <div class="card-footer">
               <span class="price">${money(activity.price)}</span>
               <div class="button-row">
@@ -1298,6 +1370,97 @@ function renderActivityGrid(activities) {
     .join("");
 }
 
+function renderVendorDetail() {
+  const vendor = state.vendors.find((item) => item.id === state.selectedVendorId) ?? currentVendor() ?? state.vendors[0];
+  const activities = publishedActivities().filter((activity) => activity.vendorId === vendor?.id);
+  app.innerHTML = `
+    <section class="section-shell">
+      <button class="ghost-action" data-route="home">← Keşfe dön</button>
+      <div class="panel vendor-public-header">
+        <div class="vendor-header-profile">
+          <span class="vendor-logo-thumb large">${vendor?.logoUrl ? `<img src="${vendor.logoUrl}" alt="${vendor.name} logo" />` : initials(vendor?.name || "Firma")}</span>
+          <div>
+            <p class="eyebrow">Firma profili</p>
+            <h2>${vendor?.name || "Firma"}</h2>
+            <p class="muted">${vendor?.district || ""} ${vendor?.city || ""}</p>
+          </div>
+        </div>
+        <p>${vendor?.description || "Bu firma için açıklama henüz eklenmedi."}</p>
+      </div>
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Yayınlanan etkinlikler</p>
+          <h2>${vendor?.name || "Firma"} etkinlikleri</h2>
+        </div>
+      </div>
+      <div id="activityGrid" class="activity-grid"></div>
+    </section>
+  `;
+  renderActivityGrid(activities);
+}
+
+function renderReviewPanel(activity) {
+  const reviews = activityReviews(activity.id);
+  const summary = ratingSummary(activity.id);
+  const ownReview = userReviewForActivity(activity.id);
+  const canReview = userCanReview(activity.id);
+  return `
+    <h3>Yorumlar ve puanlama</h3>
+    <div class="review-summary detail-review-summary">
+      <span class="stars">${summary.count ? starText(summary.average) : "☆☆☆☆☆"}</span>
+      <span>${summary.count ? `${summary.average.toFixed(1)} / 5 · ${summary.count} yorum` : "Bu etkinlik için ilk yorumu satın alma sonrası bırakabilirsiniz."}</span>
+    </div>
+    ${
+      canReview && !ownReview
+        ? `
+          <form id="reviewForm" class="review-form">
+            <input type="hidden" name="activityId" value="${activity.id}" />
+            <label>
+              Puan
+              <select name="rating" required>
+                <option value="5">5 yıldız</option>
+                <option value="4">4 yıldız</option>
+                <option value="3">3 yıldız</option>
+                <option value="2">2 yıldız</option>
+                <option value="1">1 yıldız</option>
+              </select>
+            </label>
+            <label>
+              Yorum
+              <textarea name="comment" required placeholder="Deneyiminizi kısaca paylaşın"></textarea>
+            </label>
+            <button class="primary-action" type="submit">Yorum ekle</button>
+          </form>
+        `
+        : ownReview
+          ? `<div class="support-reply"><strong>Yorumunuz</strong><p><span class="stars">${starText(ownReview.rating)}</span> ${ownReview.comment}</p></div>`
+          : `<p class="muted">Yorum ve yıldız puanı yalnızca satın aldığınız etkinlikler için açılır.</p>`
+    }
+    <div class="review-list">
+      ${
+        reviews.length
+          ? reviews
+              .map(
+                (review) => `
+                  <div class="mini-card review-item">
+                    <div class="panel-heading">
+                      <div>
+                        <strong>${review.author}</strong>
+                        <p class="muted">${review.createdAt ? dateTime(review.createdAt) : ""}</p>
+                      </div>
+                      <span class="stars">${starText(review.rating)}</span>
+                    </div>
+                    <p>${review.comment}</p>
+                  </div>
+                `,
+              )
+              .join("")
+          : `<div class="empty-state">Henüz yorum yok.</div>`
+      }
+    </div>
+  `;
+}
+
 function renderDetail() {
   const activity = state.activities.find((item) => item.id === state.selectedActivityId) ?? publishedActivities()[0];
   const vendor = getVendor(activity.vendorId);
@@ -1310,7 +1473,7 @@ function renderDetail() {
         <div>
           <p class="eyebrow">${activity.category}</p>
           <h2>${activity.title}</h2>
-          <p class="muted">${vendor.name} · ${activity.district} · ${activity.minAge}-${activity.maxAge} yaş</p>
+          <p class="muted">Düzenleyen <button class="text-link" data-vendor-detail="${vendor.id}">${vendor.name}</button> · ${activity.district} · ${activity.minAge}-${activity.maxAge} yaş</p>
         </div>
         <div class="button-row">
           ${statusPill(activity.status)}
@@ -1365,6 +1528,7 @@ function renderDetail() {
               })
               .join("")}
           </div>
+          ${renderReviewPanel(activity)}
         </article>
         ${canBook ? `<aside class="panel">
           <p class="eyebrow">Rezervasyon</p>
@@ -1464,6 +1628,7 @@ async function createBooking(form) {
   session.reserved += participantCount;
   const booking = {
     id: `book-${Date.now()}`,
+    userId: state.currentUser.id,
     activityId: activity.id,
     sessionId,
     childId: childIds[0],
@@ -1489,6 +1654,7 @@ async function createBooking(form) {
     }).select("id").single();
     if (error) notify(`Demo rezervasyon oluştu; Supabase kaydı için backend RPC gerekir: ${error.message}`);
     if (insertedBooking?.id) {
+      booking.id = insertedBooking.id;
       const participants = childIds
         .filter(isUuid)
         .map((childId) => ({ booking_id: insertedBooking.id, child_id: childId }));
@@ -1499,6 +1665,60 @@ async function createBooking(form) {
   notify("Rezervasyon onaylandı, komisyon kaydı oluşturuldu.");
   setRoute("bookings");
   if (activity.vendorNote) showPopup(activity.title, activity.vendorNote);
+}
+
+async function createReview(form) {
+  if (!state.currentUser || !isParent()) {
+    notify("Yorum eklemek için ebeveyn hesabıyla giriş yapın.");
+    return;
+  }
+
+  const data = new FormData(form);
+  const activityId = String(data.get("activityId") || "");
+  const purchasedBooking = purchasedBookingForActivity(activityId);
+  if (!purchasedBooking) {
+    notify("Yorum yalnızca satın aldığınız etkinlikler için eklenebilir.");
+    return;
+  }
+
+  const rating = Math.max(1, Math.min(5, Number(data.get("rating") || 5)));
+  const comment = String(data.get("comment") || "").trim();
+  if (!comment) {
+    notify("Yorum alanını doldurun.");
+    return;
+  }
+
+  const existing = userReviewForActivity(activityId);
+  const review = {
+    id: existing?.id || `review-${Date.now()}`,
+    activityId,
+    userId: state.currentUser.id,
+    rating,
+    comment,
+    author: state.authProfile?.full_name || state.currentUser.email || "Kullanıcı",
+    createdAt: existing?.createdAt || new Date().toISOString(),
+  };
+  state.reviews = [review, ...state.reviews.filter((item) => item.id !== review.id && !(item.activityId === activityId && item.userId === state.currentUser.id))];
+
+  if (state.supabaseReady && isUuid(activityId)) {
+    const payload = {
+      activity_id: activityId,
+      user_id: state.currentUser.id,
+      booking_id: isUuid(purchasedBooking.id) ? purchasedBooking.id : null,
+      rating,
+      comment,
+    };
+    const { error } = await state.supabaseClient.from("activity_reviews").upsert(payload, { onConflict: "activity_id,user_id" });
+    if (error) {
+      notify(`Yorum yerelde eklendi; Supabase kaydı başarısız: ${error.message}`);
+      renderDetail();
+      return;
+    }
+    await loadReviewData();
+  }
+
+  notify("Yorum ve puanınız eklendi.");
+  renderDetail();
 }
 
 function updateBookingEstimate(form = document.querySelector("#bookingForm")) {
@@ -2746,6 +2966,7 @@ document.addEventListener("click", (event) => {
   if (target.dataset.route) setRoute(target.dataset.route);
   if (target.dataset.scroll) document.querySelector(`#${target.dataset.scroll}`)?.scrollIntoView({ behavior: "smooth" });
   if (target.dataset.detail) setRoute("detail", target.dataset.detail);
+  if (target.dataset.vendorDetail) setRoute("vendorDetail", target.dataset.vendorDetail);
   if (target.hasAttribute("data-close-modal")) target.closest(".message-modal")?.remove();
   if (target.hasAttribute("data-notifications")) {
     state.notificationOpen = !state.notificationOpen;
@@ -2854,6 +3075,7 @@ document.addEventListener("click", (event) => {
 document.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (event.target.id === "bookingForm") await createBooking(event.target);
+  if (event.target.id === "reviewForm") await createReview(event.target);
   if (event.target.id === "activityForm") await createActivity(event.target);
   if (event.target.id === "vendorProfileForm") await updateVendorProfile(event.target);
   if (event.target.id === "adminUserForm") await addAdminUser(event.target);
