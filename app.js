@@ -466,6 +466,30 @@ function notificationItems() {
           activityId: activity.id,
         }),
       );
+    state.bookings
+      .filter((booking) => ["confirmed", "pending_payment"].includes(booking.status))
+      .slice(0, 12)
+      .forEach((booking) => {
+        const found = getSession(booking.sessionId);
+        items.push({
+          id: `admin-booking-${booking.id}`,
+          text: `${found?.activity.title || "Bir etkinlik"} satın alındı`,
+          meta: `${booking.buyerName || booking.buyerEmail || "Kullanıcı"} · ${money(booking.totalAmount)}`,
+          route: "admin",
+          tab: "payments",
+        });
+      });
+    state.supportTickets
+      .filter((ticket) => ticket.status === "pending")
+      .forEach((ticket) =>
+        items.push({
+          id: `admin-support-${ticket.id}`,
+          text: `${ticket.subject || "Yeni destek talebi"} oluşturuldu`,
+          meta: `${ticket.role || "Kullanıcı"} · ${ticket.email || "Destek"}`,
+          route: "admin",
+          tab: "support",
+        }),
+      );
   }
 
   if (isVendor()) {
@@ -1875,6 +1899,8 @@ function renderDetail() {
   const vendor = getVendor(activity.vendorId);
   const firstAvailable = activity.sessions.find((session) => session.capacity > session.reserved);
   const canBook = isParent() && !isVendor() && !isAdmin();
+  const eligibleChildren = state.children.filter((child) => childEligibleForActivity(child, activity));
+  const defaultChildId = eligibleChildren[0]?.id || "";
   app.innerHTML = `
     <section class="section-shell">
       <button class="ghost-action" data-route="home">← Listeye dön</button>
@@ -1973,7 +1999,7 @@ function renderDetail() {
               <legend>Katılımcı çocuklar</legend>
               ${
                 state.children.length
-                  ? state.children.map((child, index) => `<label class="check-row"><input type="checkbox" name="children" value="${child.id}" ${index === 0 ? "checked" : ""} /> <span>${child.name}, ${child.age} yaş</span></label>`).join("")
+                  ? state.children.map((child) => childBookingOption(child, activity, defaultChildId)).join("")
                   : `<div class="empty-state">Rezervasyon için önce profilinizden çocuk ekleyin.</div>`
               }
             </fieldset>
@@ -1990,14 +2016,33 @@ function renderDetail() {
             </label>
             <div class="booking-total wide">
               <span>Toplam</span>
-              <strong data-booking-total>${money((firstAvailable?.price || activity.price) * Math.max(1, state.children.length ? 1 : 0))}</strong>
+              <strong data-booking-total>${money((firstAvailable?.price || activity.price) * (eligibleChildren.length ? 1 : 0))}</strong>
             </div>
-            <button class="primary-action wide" type="submit" ${state.children.length ? "" : "disabled"}>Rezervasyon oluştur</button>
+            <button class="primary-action wide" type="submit" ${eligibleChildren.length ? "" : "disabled"}>Rezervasyon oluştur</button>
           </form>
           <p class="muted">Başarılı online ödeme confirmed rezervasyon üretir; komisyon kaydı otomatik hesaplanır.</p>
         </aside>` : ""}
       </div>
     </section>
+  `;
+}
+
+function childEligibleForActivity(child, activity) {
+  const age = Number(child?.age);
+  return Number.isFinite(age) && age >= Number(activity.minAge) && age <= Number(activity.maxAge);
+}
+
+function childBookingOption(child, activity, defaultChildId) {
+  const eligible = childEligibleForActivity(child, activity);
+  const reason = eligible ? "" : `${activity.minAge}-${activity.maxAge} yaş aralığına uygun değil`;
+  return `
+    <label class="check-row ${eligible ? "" : "disabled-option"}">
+      <input type="checkbox" name="children" value="${child.id}" ${child.id === defaultChildId ? "checked" : ""} ${eligible ? "" : "disabled"} />
+      <span>
+        ${child.name}, ${child.age} yaş
+        ${reason ? `<small>${reason}</small>` : ""}
+      </span>
+    </label>
   `;
 }
 
@@ -2030,6 +2075,14 @@ async function createBooking(form) {
     notify("En az bir çocuk seçin.");
     return;
   }
+  const ineligibleChildren = childIds
+    .map((childId) => state.children.find((child) => child.id === childId))
+    .filter((child) => !child || !childEligibleForActivity(child, activity));
+  if (ineligibleChildren.length) {
+    notify(`Bu kurs yalnızca ${activity.minAge}-${activity.maxAge} yaş aralığındaki çocuklar için satın alınabilir.`);
+    renderDetail();
+    return;
+  }
   const remaining = session.capacity - session.reserved;
   if (participantCount > remaining) {
     notify(`Bu seans için sadece ${remaining} kişilik yer kaldı.`);
@@ -2057,6 +2110,9 @@ async function createBooking(form) {
     totalAmount,
     commissionRate: vendor.commissionRate,
     commissionAmount: Math.round(totalAmount * vendor.commissionRate),
+    buyerName: state.authProfile?.full_name || state.currentUser.email || "",
+    buyerEmail: state.currentUser.email || "",
+    childNames: childIds.map((childId) => state.children.find((child) => child.id === childId)?.name).filter(Boolean),
     createdAt: new Date().toISOString(),
     cancelledAt: null,
     notes: formData.get("notes"),

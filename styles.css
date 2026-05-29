@@ -1768,6 +1768,24 @@ input[type="range"] {
   min-height: 18px;
 }
 
+.check-row small {
+  display: block;
+  margin-top: 3px;
+  color: var(--red);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.disabled-option {
+  background: #f4f6f7;
+  color: var(--muted);
+  opacity: 0.72;
+}
+
+.disabled-option input {
+  cursor: not-allowed;
+}
+
 .booking-total {
   display: flex;
   align-items: center;

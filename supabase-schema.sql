@@ -325,6 +325,38 @@ create trigger sync_booking_session_reserved
 after insert or update or delete on public.bookings
 for each row execute function public.sync_session_reserved_count();
 
+create or replace function public.validate_booking_participant_age()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  child_age int;
+  min_allowed int;
+  max_allowed int;
+begin
+  select c.age, a.min_age, a.max_age
+    into child_age, min_allowed, max_allowed
+  from public.children c
+  join public.bookings b on b.id = new.booking_id
+  join public.activity_sessions s on s.id = b.session_id
+  join public.activities a on a.id = s.activity_id
+  where c.id = new.child_id;
+
+  if child_age is null or child_age < min_allowed or child_age > max_allowed then
+    raise exception 'Child age is outside the activity age range';
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists validate_booking_participant_age on public.booking_participants;
+create trigger validate_booking_participant_age
+before insert or update on public.booking_participants
+for each row execute function public.validate_booking_participant_age();
+
 update public.activity_sessions s
 set reserved_count = coalesce((
   select sum(b.participant_count)
