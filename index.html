@@ -129,6 +129,21 @@
             <select name="type"></select>
           </label>
           <label>
+            Sırala
+            <select name="sort">
+              <option value="recommended">Önerilen</option>
+              <option value="most-reviewed">En çok yorum alanlar</option>
+              <option value="top-rated">En yüksek puan alanlar</option>
+              <option value="price-asc">En ucuzdan pahalıya</option>
+              <option value="price-desc">En pahalıdan ucuza</option>
+              <option value="newest">En yeni eklenenler</option>
+              <option value="best-selling">En çok satılanlar</option>
+              <option value="upcoming">Yaklaşan etkinlikler</option>
+              <option value="online">Online kurslar</option>
+              <option value="physical">Yüz yüze kurslar</option>
+            </select>
+          </label>
+          <label>
             Maks. fiyat
             <input name="maxPrice" type="range" min="250" max="10000" step="50" value="10000" />
             <span class="range-value" id="maxPriceLabel">₺10000</span>

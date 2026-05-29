@@ -249,6 +249,50 @@ function saveSupportTickets() {
   localStorage.setItem("supportTickets", JSON.stringify(state.supportTickets));
 }
 
+function notificationStorageKey() {
+  return `readNotifications:${state.currentUser?.id || state.currentUser?.email || "guest"}`;
+}
+
+function loadReadNotificationsLocal() {
+  try {
+    state.readNotifications = new Set(JSON.parse(localStorage.getItem(notificationStorageKey()) || "[]"));
+  } catch {
+    state.readNotifications = new Set();
+  }
+}
+
+function saveReadNotificationsLocal() {
+  localStorage.setItem(notificationStorageKey(), JSON.stringify([...state.readNotifications]));
+}
+
+async function loadReadNotifications() {
+  loadReadNotificationsLocal();
+  if (!state.supabaseReady || !state.currentUser) return;
+  const { data, error } = await state.supabaseClient.from("notification_reads").select("notification_id").eq("user_id", state.currentUser.id);
+  if (!error && data) {
+    data.forEach((item) => state.readNotifications.add(item.notification_id));
+    saveReadNotificationsLocal();
+  }
+}
+
+async function markNotificationRead(id) {
+  if (!id) return;
+  state.readNotifications.add(id);
+  saveReadNotificationsLocal();
+  if (state.supabaseReady && state.currentUser) {
+    await state.supabaseClient.from("notification_reads").upsert({ user_id: state.currentUser.id, notification_id: id });
+  }
+}
+
+async function markAllNotificationsRead() {
+  const ids = notificationItems().map((item) => item.id);
+  ids.forEach((id) => state.readNotifications.add(id));
+  saveReadNotificationsLocal();
+  if (state.supabaseReady && state.currentUser && ids.length) {
+    await state.supabaseClient.from("notification_reads").upsert(ids.map((id) => ({ user_id: state.currentUser.id, notification_id: id })));
+  }
+}
+
 function normalizeSupabaseConfig(config) {
   const url = String(config?.url || "").trim().replace(/\/+$/, "");
   const anonKey = String(config?.anonKey || "").trim();
@@ -319,7 +363,10 @@ async function setSupabaseUser(user) {
   state.currentUser = user;
   state.authProfile = null;
   state.vendorIds = [];
-  if (!user || !state.supabaseClient) return;
+  if (!user || !state.supabaseClient) {
+    state.readNotifications = new Set();
+    return;
+  }
 
   const { data } = await state.supabaseClient.from("profiles").select("*").eq("id", user.id).maybeSingle();
   state.authProfile = data ?? {
@@ -353,6 +400,7 @@ async function setSupabaseUser(user) {
       await ensureVendorProfile(user);
     }
   }
+  await loadReadNotifications();
 }
 
 async function ensureVendorProfile(user) {
@@ -491,6 +539,29 @@ function notificationItems() {
           tab: "support",
         }),
       );
+    state.reviews.slice(0, 20).forEach((review) => {
+      const activity = state.activities.find((item) => item.id === review.activityId);
+      items.push({
+        id: `admin-review-${review.id}`,
+        text: `${activity?.title || "Bir etkinlik"} için yeni yorum yapıldı`,
+        meta: `${review.author} · ${review.rating}/5`,
+        route: "detail",
+        activityId: review.activityId,
+      });
+    });
+    state.bookings
+      .filter((booking) => ["refunded", "cancelled_by_vendor"].includes(booking.status))
+      .slice(0, 20)
+      .forEach((booking) => {
+        const found = getSession(booking.sessionId);
+        items.push({
+          id: `admin-refund-${booking.id}-${booking.cancelledAt || booking.status}`,
+          text: `${found?.activity.title || "Etkinlik"} satıcı tarafından iptal/iade edildi`,
+          meta: booking.cancelReason || "İptal/iade",
+          route: "admin",
+          tab: "payments",
+        });
+      });
   }
 
   if (isVendor()) {
@@ -541,6 +612,33 @@ function notificationItems() {
           meta: `${money(booking.totalAmount)} · ${booking.status}`,
           route: "vendor",
           tab: "bookings",
+        });
+      });
+    state.reviews
+      .filter((review) => vendorActivities.some((activity) => activity.id === review.activityId))
+      .slice(0, 20)
+      .forEach((review) => {
+        const activity = state.activities.find((item) => item.id === review.activityId);
+        items.push({
+          id: `vendor-review-${review.id}`,
+          text: `${activity?.title || "Etkinlik"} için yeni yorum geldi`,
+          meta: `${review.author} · ${review.rating}/5`,
+          route: "detail",
+          activityId: review.activityId,
+        });
+      });
+  }
+
+  if (isParent()) {
+    state.bookings
+      .filter((booking) => booking.userId === state.currentUser?.id && ["refunded", "cancelled_by_vendor"].includes(booking.status))
+      .forEach((booking) => {
+        const found = getSession(booking.sessionId);
+        items.push({
+          id: `parent-refund-${booking.id}-${booking.cancelledAt || booking.status}`,
+          text: `${found?.activity.title || "Etkinlik"} iptal edildi ve biletiniz iade edildi`,
+          meta: booking.cancelReason || "İptal/iade",
+          route: "bookings",
         });
       });
   }
@@ -896,6 +994,7 @@ async function loadBookingData() {
         buyerName: booking.user?.full_name || booking.user?.email || "",
         buyerEmail: booking.user?.email || "",
         status: booking.status,
+        cancelReason: booking.cancel_reason || "",
         paymentProvider: "Supabase",
         totalAmount,
         commissionRate,
@@ -1306,6 +1405,7 @@ function statusPill(status) {
     approved: ["Onaylı", "green"],
     pending: ["Onay bekliyor", "orange"],
     draft: ["Taslak", "orange"],
+    cancelled: ["İptal edildi", "red"],
     confirmed: ["Onaylandı", "green"],
     pending_payment: ["Ödeme bekliyor", "orange"],
     failed: ["Başarısız", "red"],
@@ -1432,7 +1532,7 @@ function renderSiteFooter() {
           (group) => `
             <section>
               <h3>${group}</h3>
-              <ul>${state.footerLinks.filter((link) => link.isActive && link.group === group).map((link) => `<li><a href="${link.url}">${link.label}</a></li>`).join("")}</ul>
+              <ul>${state.footerLinks.filter((link) => link.isActive && link.group === group).map((link) => `<li><a href="${link.url}" ${link.label.toLocaleLowerCase("tr-TR").includes("online") ? "data-online-courses" : ""}>${link.label}</a></li>`).join("")}</ul>
             </section>
           `,
         )
@@ -1710,7 +1810,7 @@ function setupFilters() {
   const lists = {
     category: ["Tümü", ...new Set(state.activities.map((activity) => activity.category))],
     age: ["Tümü", "0-2", "3-4", "5-6", "7-9", "10-12"],
-    district: ["Tümü", ...new Set(state.activities.map((activity) => activity.district))],
+    district: ["Tümü", ...new Set(state.activities.filter((activity) => activity.deliveryMode !== "online" && activity.district).map((activity) => activity.district))],
     type: ["Tümü", "Fiziksel", "Online", "Hibrit", ...new Set(state.activities.map((activity) => activity.type))],
   };
 
@@ -1738,9 +1838,10 @@ function filterActivities(formData) {
   const age = formData.get("age");
   const district = formData.get("district");
   const type = formData.get("type");
+  const sort = formData.get("sort") || "recommended";
   const maxPrice = Number(formData.get("maxPrice"));
 
-  return publishedActivities().filter((activity) => {
+  const filtered = publishedActivities().filter((activity) => {
     const inAge =
       age === "Tümü" ||
       (() => {
@@ -1762,6 +1863,24 @@ function filterActivities(formData) {
       activity.price <= maxPrice
     );
   });
+  return sortActivities(filtered, sort);
+}
+
+function sortActivities(activities, sort) {
+  const copy = [...activities];
+  const salesCount = (activity) =>
+    state.bookings.filter((booking) => booking.activityId === activity.id && ["confirmed", "pending_payment"].includes(booking.status)).reduce((sum, booking) => sum + (booking.participantCount || 1), 0);
+  const nextSessionTime = (activity) => Math.min(...activity.sessions.map((session) => new Date(session.start).getTime()).filter((time) => time >= Date.now()), Infinity);
+  if (sort === "online") return copy.filter((activity) => activity.deliveryMode === "online");
+  if (sort === "physical") return copy.filter((activity) => activity.deliveryMode !== "online");
+  if (sort === "most-reviewed") return copy.sort((a, b) => activityReviews(b.id).length - activityReviews(a.id).length);
+  if (sort === "top-rated") return copy.sort((a, b) => ratingSummary(b.id).average - ratingSummary(a.id).average);
+  if (sort === "price-asc") return copy.sort((a, b) => a.price - b.price);
+  if (sort === "price-desc") return copy.sort((a, b) => b.price - a.price);
+  if (sort === "best-selling") return copy.sort((a, b) => salesCount(b) - salesCount(a));
+  if (sort === "upcoming") return copy.sort((a, b) => nextSessionTime(a) - nextSessionTime(b));
+  if (sort === "newest") return copy.reverse();
+  return copy;
 }
 
 function renderActivityGrid(activities) {
@@ -1826,6 +1945,7 @@ function renderVendorDetail() {
           </div>
         </div>
         <p>${vendor?.description || "Bu firma için açıklama henüz eklenmedi."}</p>
+        ${vendor?.address ? `<a class="map-thumb" href="${googleMapsSearchUrl({ locationQuery: `${vendor.name} ${vendor.address}` })}" target="_blank" rel="noreferrer"><iframe title="${vendor.name} adres haritası" src="${mapEmbedUrl({ locationQuery: `${vendor.name} ${vendor.address}` })}" loading="lazy"></iframe></a>` : ""}
       </div>
       <div class="section-heading">
         <div>
@@ -2414,7 +2534,7 @@ function renderVendor() {
       </div>
       <div class="dashboard-layout">
         <nav class="side-tabs">
-          ${["overview", "profile", "activities", "calendar", "bookings", "revenue", "messages", "new"].map((tab) => `<button class="tab-button ${state.vendorTab === tab ? "active" : ""}" data-vendor-tab="${tab}">${vendorTabLabel(tab)}</button>`).join("")}
+          ${["overview", "profile", "activities", "calendar", "bookings", "revenue", "insights", "messages", "new"].map((tab) => `<button class="tab-button ${state.vendorTab === tab ? "active" : ""}" data-vendor-tab="${tab}">${vendorTabLabel(tab)}</button>`).join("")}
         </nav>
         <div>${vendorPanel(vendor, vendorActivities, bookings)}</div>
       </div>
@@ -2429,26 +2549,63 @@ function vendorTabLabel(tab) {
     calendar: "Takvim",
     bookings: "Rezervasyonlar",
     revenue: "Gelirler",
+    insights: "İstatistik",
     messages: "Mesajlar",
     profile: "Firma profili",
     new: "Yeni etkinlik",
   }[tab];
 }
 
+function isToday(value) {
+  if (!value) return false;
+  const date = new Date(value);
+  const now = new Date();
+  return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate();
+}
+
+function refundableStatus(status) {
+  return ["refunded", "cancelled_by_vendor", "cancelled_by_admin"].includes(status);
+}
+
+function paidStatus(status) {
+  return ["confirmed", "pending_payment"].includes(status);
+}
+
+function bookingRevenueSummary(bookings) {
+  const sales = bookings.filter((booking) => paidStatus(booking.status));
+  const refunds = bookings.filter((booking) => refundableStatus(booking.status));
+  const gross = sales.reduce((sum, booking) => sum + booking.totalAmount, 0);
+  const refundTotal = refunds.reduce((sum, booking) => sum + booking.totalAmount, 0);
+  const commission = sales.reduce((sum, booking) => sum + booking.commissionAmount, 0);
+  return {
+    salesCount: sales.length,
+    refundCount: refunds.length,
+    gross,
+    refunds: refundTotal,
+    commission,
+    net: gross - refundTotal - commission,
+  };
+}
+
 function vendorPanel(vendor, activities, bookings) {
-  const gross = bookings.reduce((sum, booking) => sum + booking.totalAmount, 0);
-  const commission = bookings.reduce((sum, booking) => sum + booking.commissionAmount, 0);
+  const summary = bookingRevenueSummary(bookings);
+  const todaySummary = bookingRevenueSummary(bookings.filter((booking) => isToday(booking.createdAt) || isToday(booking.cancelledAt)));
   if (state.vendorTab === "overview") {
     return `
       <div class="metrics-grid">
-        <div class="metric-card"><span>Toplam satış</span><strong>${money(gross)}</strong></div>
-        <div class="metric-card"><span>Komisyon</span><strong>${money(commission)}</strong></div>
-        <div class="metric-card"><span>Net hak ediş</span><strong>${money(gross - commission)}</strong></div>
-        <div class="metric-card"><span>Rezervasyon</span><strong>${bookings.length}</strong></div>
+        <div class="metric-card"><span>Toplam satış</span><strong>${money(summary.gross)}</strong></div>
+        <div class="metric-card"><span>Yapılan iadeler</span><strong>${money(summary.refunds)}</strong></div>
+        <div class="metric-card"><span>Net gelir</span><strong>${money(summary.net)}</strong></div>
+        <div class="metric-card"><span>Rezervasyon</span><strong>${summary.salesCount}</strong></div>
       </div>
       <div class="panel">
         <h3>Bugünün operasyon özeti</h3>
-        <p class="muted">Takvim, rezervasyon ve gelir ekranları aynı veri modelinden beslenir. Yeni rezervasyonlar anlık olarak bu panelde görünür.</p>
+        <div class="metrics-grid">
+          <div class="metric-card"><span>Bugünkü satış adedi</span><strong>${todaySummary.salesCount}</strong></div>
+          <div class="metric-card"><span>Bugünkü gelir</span><strong>${money(todaySummary.gross)}</strong></div>
+          <div class="metric-card"><span>Bugünkü iade tutarı</span><strong>${money(todaySummary.refunds)}</strong></div>
+          <div class="metric-card"><span>Bugünkü net gelir</span><strong>${money(todaySummary.net)}</strong></div>
+        </div>
       </div>
     `;
   }
@@ -2456,6 +2613,7 @@ function vendorPanel(vendor, activities, bookings) {
   if (state.vendorTab === "calendar") return calendarPanel(activities);
   if (state.vendorTab === "bookings") return bookingTable(bookings);
   if (state.vendorTab === "revenue") return revenuePanel(bookings);
+  if (state.vendorTab === "insights") return insightPanel(activities);
   if (state.vendorTab === "messages") return vendorMessagesPanel(vendor);
   if (state.vendorTab === "profile") return vendorProfileEditPanel(vendor);
   return newActivityForm(vendor);
@@ -2495,6 +2653,7 @@ function activityTable(activities) {
                 </div>
                 <div class="button-row">
                   <button class="ghost-action" data-edit-activity="${activity.id}">Düzenle</button>
+                  ${activity.status !== "cancelled" ? `<button class="ghost-action danger-action" data-cancel-activity="${activity.id}">Etkinliği iptal et</button>` : ""}
                   <button class="ghost-action danger-action" data-delete-activity="${activity.id}">Kaldır</button>
                 </div>
               </article>
@@ -2510,11 +2669,18 @@ function activityTable(activities) {
 function calendarPanel(activities) {
   const sessions = activities.flatMap((activity) => activity.sessions.map((session) => ({ activity, session })));
   const days = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
+  const monthDays = Array.from({ length: 35 }, (_, index) => {
+    const date = new Date();
+    date.setDate(1);
+    const offset = (date.getDay() + 6) % 7;
+    date.setDate(index - offset + 1);
+    return date;
+  });
   return `
     <div class="panel">
       <div class="panel-heading">
         <h3>Haftalık takvim</h3>
-        <span class="tag">Gün / hafta / ay altyapısı</span>
+        <span class="tag">Doluluk göstergeli</span>
       </div>
       <div class="calendar-grid">
         ${days
@@ -2524,15 +2690,48 @@ function calendarPanel(activities) {
                 <strong>${day}</strong>
                 ${sessions
                   .filter((item) => (new Date(item.session.start).getDay() + 6) % 7 === index)
-                  .map((item) => `<div class="calendar-event">${item.activity.title}<br>${dateTime(item.session.start).split(" ").slice(-1)}</div>`)
+                  .map((item) => calendarEventMarkup(item, false))
                   .join("")}
               </div>
             `,
           )
           .join("")}
       </div>
+      <div class="panel-heading">
+        <h3>Aylık takvim</h3>
+        <span class="tag">Geçmiş yeşil · yaklaşan kırmızı</span>
+      </div>
+      <div class="calendar-grid">
+        ${monthDays
+          .map((date) => {
+            const daySessions = sessions.filter((item) => sameDay(item.session.start, date));
+            return `
+              <div class="calendar-day">
+                <strong>${date.getDate()}</strong>
+                ${daySessions.map((item) => calendarEventMarkup(item, true)).join("")}
+              </div>
+            `;
+          })
+          .join("")}
+      </div>
     </div>
   `;
+}
+
+function sameDay(value, date) {
+  const itemDate = new Date(value);
+  return itemDate.getFullYear() === date.getFullYear() && itemDate.getMonth() === date.getMonth() && itemDate.getDate() === date.getDate();
+}
+
+function occupancy(session) {
+  return Math.max(0, Math.min(100, Math.round((Number(session.reserved || 0) / Math.max(1, Number(session.capacity || 1))) * 100)));
+}
+
+function calendarEventMarkup(item, monthly) {
+  const isPast = new Date(item.session.end || item.session.start).getTime() < Date.now();
+  const rate = occupancy(item.session);
+  const title = isPast ? `Bu etkinlik %${rate} dolulukla gerçekleşti.` : `Doluluk: %${rate}`;
+  return `<div class="calendar-event ${isPast ? "past" : "future"}" title="${title}" style="--fill:${isPast ? 100 : rate}%">${item.activity.title}<br>${monthly ? dateTime(item.session.start).split(" ").slice(-1) : title}</div>`;
 }
 
 function bookingTable(bookings) {
@@ -2546,7 +2745,7 @@ function bookingTable(bookings) {
             bookings.length
               ? bookings.map((booking) => {
                   const { activity, session } = getSession(booking.sessionId);
-                  return `<tr><td>${activity.title}</td><td>${dateTime(session.start)}</td><td>${booking.buyerName || booking.buyerEmail || "-"}</td><td>${bookingParticipantSummary(booking)}</td><td>${booking.notes || "-"}</td><td>${money(booking.totalAmount)}</td><td>${statusPill(booking.status)}</td><td><div class="button-row"><button class="ghost-action" data-detail="${activity.id}">Etkinlik</button>${canCancelBooking(booking) ? `<button class="ghost-action danger-action" data-cancel-booking="${booking.id}">İptal et</button>` : ""}</div></td></tr>`;
+                  return `<tr><td>${activity.title}</td><td>${dateTime(session.start)}</td><td>${booking.buyerName || booking.buyerEmail || "-"}</td><td>${bookingParticipantSummary(booking)}</td><td>${booking.notes || booking.cancelReason || "-"}</td><td>${money(booking.totalAmount)}</td><td>${statusPill(booking.status)}</td><td><div class="button-row"><button class="ghost-action" data-detail="${activity.id}">Etkinlik</button>${canCancelBooking(booking) ? `<button class="ghost-action danger-action" data-vendor-refund-booking="${booking.id}">İade et</button>` : ""}</div></td></tr>`;
                 }).join("")
               : `<tr><td colspan="8">Henüz rezervasyon yok.</td></tr>`
           }</tbody>
@@ -2560,18 +2759,18 @@ function revenuePanel(bookings) {
   const vendor = currentVendor();
   const expenses = state.vendorExpenses.filter((expense) => expense.vendorId === vendor?.id);
   const editingExpense = expenses.find((expense) => expense.id === state.editingExpenseId);
-  const gross = bookings.reduce((sum, booking) => sum + booking.totalAmount, 0);
-  const commission = bookings.reduce((sum, booking) => sum + booking.commissionAmount, 0);
+  const summary = bookingRevenueSummary(bookings);
   const expenseTotal = expenses.reduce((sum, expense) => sum + expense.amount, 0);
   return `
     <div class="panel">
       <h3>Gelir özeti</h3>
       <div class="metrics-grid">
-        <div class="metric-card"><span>Brüt satış</span><strong>${money(gross)}</strong></div>
-        <div class="metric-card"><span>Platform komisyonu</span><strong>${money(commission)}</strong></div>
+        <div class="metric-card"><span>Toplam satış geliri</span><strong>${money(summary.gross)}</strong></div>
+        <div class="metric-card"><span>Yapılan iadeler</span><strong>${money(summary.refunds)}</strong></div>
+        <div class="metric-card"><span>Platform komisyonu</span><strong>${money(summary.commission)}</strong></div>
         <div class="metric-card"><span>Giderler</span><strong>${money(expenseTotal)}</strong></div>
-        <div class="metric-card"><span>Net hak ediş</span><strong>${money(gross - commission - expenseTotal)}</strong></div>
-        <div class="metric-card"><span>İade</span><strong>${money(0)}</strong></div>
+        <div class="metric-card"><span>Net gelir</span><strong>${money(summary.net - expenseTotal)}</strong></div>
+        <div class="metric-card"><span>İade adedi</span><strong>${summary.refundCount}</strong></div>
       </div>
       <form id="expenseForm" class="form-grid">
         <input type="hidden" name="expenseId" value="${editingExpense?.id ?? ""}" />
@@ -2604,6 +2803,49 @@ function revenuePanel(bookings) {
                   .join("")
               : `<tr><td colspan="5">Henüz gider kaydı yok.</td></tr>`
           }</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function activityInsightRows(activities) {
+  return activities.map((activity) => {
+    const bookings = state.bookings.filter((booking) => booking.activityId === activity.id);
+    const paid = bookings.filter((booking) => paidStatus(booking.status));
+    const refunds = bookings.filter((booking) => refundableStatus(booking.status));
+    const reviews = activityReviews(activity.id);
+    const revenue = paid.reduce((sum, booking) => sum + booking.totalAmount, 0);
+    const refundAmount = refunds.reduce((sum, booking) => sum + booking.totalAmount, 0);
+    const rating = ratingSummary(activity.id);
+    return {
+      activity,
+      sales: paid.reduce((sum, booking) => sum + (booking.participantCount || 1), 0),
+      revenue,
+      comments: reviews.length,
+      rating: rating.average,
+      refundRate: bookings.length ? refunds.length / bookings.length : 0,
+      refundAmount,
+    };
+  });
+}
+
+function insightPanel(activities) {
+  const rows = activityInsightRows(activities);
+  const sorted = [...rows].sort((a, b) => b.revenue - a.revenue);
+  return `
+    <div class="panel">
+      <h3>İstatistik / Insight</h3>
+      <div class="metrics-grid">
+        <div class="metric-card"><span>En çok satan</span><strong>${[...rows].sort((a, b) => b.sales - a.sales)[0]?.activity.title || "-"}</strong></div>
+        <div class="metric-card"><span>En çok gelir</span><strong>${sorted[0]?.activity.title || "-"}</strong></div>
+        <div class="metric-card"><span>En çok yorum</span><strong>${[...rows].sort((a, b) => b.comments - a.comments)[0]?.activity.title || "-"}</strong></div>
+        <div class="metric-card"><span>En yüksek puan</span><strong>${[...rows].sort((a, b) => b.rating - a.rating)[0]?.activity.title || "-"}</strong></div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Kurs</th><th>Satış</th><th>Gelir</th><th>Yorum</th><th>Ortalama puan</th><th>İade oranı</th><th>İade tutarı</th></tr></thead>
+          <tbody>${sorted.map((row) => `<tr><td>${row.activity.title}</td><td>${row.sales}</td><td>${money(row.revenue)}</td><td>${row.comments}</td><td>${row.rating ? row.rating.toFixed(1) : "-"}</td><td>%${Math.round(row.refundRate * 100)}</td><td>${money(row.refundAmount)}</td></tr>`).join("") || `<tr><td colspan="7">İstatistik için kayıt yok.</td></tr>`}</tbody>
         </table>
       </div>
     </div>
@@ -2718,6 +2960,7 @@ function vendorProfileEditPanel(vendor) {
         <div class="wide media-grid" id="vendorLogoPreview">
           ${vendor.logoUrl ? `<div class="media-thumb"><img src="${vendor.logoUrl}" alt="${vendor.name} logo önizleme" /><span>Mevcut logo</span></div>` : ""}
         </div>
+        ${vendor.address ? `<a class="wide map-thumb" href="${googleMapsSearchUrl({ locationQuery: `${vendor.name} ${vendor.address}` })}" target="_blank" rel="noreferrer"><iframe title="${vendor.name} adres haritası" src="${mapEmbedUrl({ locationQuery: `${vendor.name} ${vendor.address}` })}" loading="lazy"></iframe></a>` : ""}
         <button class="primary-action wide" type="submit">Firma profilini kaydet</button>
       </form>
     </div>
@@ -2988,18 +3231,52 @@ async function createActivity(form) {
 }
 
 async function deleteActivity(activityId) {
+  await cancelActivityWithReason(activityId, "Etkinliği kaldırmak/iptal etmek için neden yazın");
+}
+
+async function cancelActivityWithReason(activityId, message = "Etkinliği iptal etme nedeni") {
   const activity = state.activities.find((item) => item.id === activityId);
   if (!activity) return;
-
-  state.activities = state.activities.filter((item) => item.id !== activityId);
-  if (state.editingActivityId === activityId) state.editingActivityId = null;
-
-  if (state.supabaseReady && !String(activityId).startsWith("act-")) {
-    const { error } = await state.supabaseClient.from("activities").delete().eq("id", activityId);
-    if (error) notify(`Yerel olarak kaldırıldı; Supabase silme başarısız: ${error.message}`);
+  const reason = window.prompt(message, "Etkinlik yeterli katılım olmadığı için iptal edilmiştir.");
+  if (!reason?.trim()) {
+    notify("İptal/iade nedeni zorunlu.");
+    return;
   }
 
-  notify("Etkinlik kaldırıldı.");
+  activity.status = "cancelled";
+  if (state.editingActivityId === activityId) state.editingActivityId = null;
+  const affectedBookings = state.bookings.filter((booking) => booking.activityId === activityId && paidStatus(booking.status));
+  const cancelledAt = new Date().toISOString();
+  affectedBookings.forEach((booking) => {
+    booking.status = "refunded";
+    booking.cancelledAt = cancelledAt;
+    booking.cancelReason = reason.trim();
+  });
+  syncSessionReservationsFromBookings();
+
+  if (state.supabaseReady) {
+    if (isUuid(activityId)) {
+      await state.supabaseClient.from("activities").update({ status: "cancelled" }).eq("id", activityId);
+    }
+    const bookingIds = affectedBookings.map((booking) => booking.id).filter(isUuid);
+    if (bookingIds.length) {
+      const { error } = await state.supabaseClient
+        .from("bookings")
+        .update({ status: "refunded", cancelled_at: cancelledAt, cancel_reason: reason.trim() })
+        .in("id", bookingIds);
+      if (error) notify(`İade yerelde işlendi; Supabase güncellenemedi: ${error.message}`);
+      else await loadBookingData();
+    }
+  }
+
+  state.notifications.unshift({
+    id: `vendor-activity-refund-${activityId}-${cancelledAt}`,
+    text: `${activity.title} iptal edildi; ${affectedBookings.length} bilet iade edildi.`,
+    meta: reason.trim(),
+    route: "vendor",
+    tab: "bookings",
+  });
+  notify(`Etkinlik iptal edildi; ${affectedBookings.length} bilet iade sürecine alındı.`);
   renderVendor();
 }
 
@@ -3293,7 +3570,7 @@ function renderAdmin() {
       </div>
       <div class="dashboard-layout">
         <nav class="side-tabs">
-          ${["approvals", "vendors", "messages", "site", "admins", "payments", "commissions", "categories", "support"].map((tab) => `<button class="tab-button ${state.adminTab === tab ? "active" : ""}" data-admin-tab="${tab}">${adminTabLabel(tab)}</button>`).join("")}
+          ${["approvals", "vendors", "messages", "site", "admins", "payments", "commissions", "insights", "categories", "support"].map((tab) => `<button class="tab-button ${state.adminTab === tab ? "active" : ""}" data-admin-tab="${tab}">${adminTabLabel(tab)}</button>`).join("")}
         </nav>
         <div>${adminPanel()}</div>
       </div>
@@ -3302,7 +3579,7 @@ function renderAdmin() {
 }
 
 function adminTabLabel(tab) {
-  return { approvals: "Onaylar", vendors: "Firmalar", messages: "Satıcı mesajları", site: "Site ayarları", admins: "Alt adminler", payments: "Satılan etkinlikler", commissions: "Komisyonlar", categories: "Kategoriler", support: "Destek" }[tab];
+  return { approvals: "Onaylar", vendors: "Firmalar", messages: "Satıcı mesajları", site: "Site ayarları", admins: "Alt adminler", payments: "Satılan etkinlikler", commissions: "Komisyonlar", insights: "İstatistik", categories: "Kategoriler", support: "Destek" }[tab];
 }
 
 function adminPanel() {
@@ -3327,6 +3604,7 @@ function adminPanel() {
   if (state.adminTab === "admins") return adminUsersPanel();
   if (state.adminTab === "payments") return adminPaymentTable();
   if (state.adminTab === "commissions") return adminCommissionTable();
+  if (state.adminTab === "insights") return insightPanel(state.activities);
   if (state.adminTab === "categories") {
     return `<div class="panel">
       <h3>Kategori yönetimi</h3>
@@ -3733,6 +4011,34 @@ async function refundBooking(id) {
   renderAdmin();
 }
 
+async function vendorRefundBooking(id) {
+  const booking = state.bookings.find((item) => item.id === id);
+  if (!booking) return;
+  const reason = window.prompt("İade/iptal nedeni yazın", "Etkinlik yeterli katılım olmadığı için iptal edilmiştir.");
+  if (!reason?.trim()) {
+    notify("İptal/iade nedeni zorunlu.");
+    return;
+  }
+  booking.status = "refunded";
+  booking.cancelledAt = new Date().toISOString();
+  booking.cancelReason = reason.trim();
+  syncSessionReservationsFromBookings();
+  if (state.supabaseReady && isUuid(id)) {
+    const { error } = await state.supabaseClient
+      .from("bookings")
+      .update({ status: "refunded", cancelled_at: booking.cancelledAt, cancel_reason: booking.cancelReason })
+      .eq("id", id);
+    if (error) {
+      notify(`İade yerelde işlendi; Supabase güncellenemedi: ${error.message}`);
+      renderVendor();
+      return;
+    }
+    await loadBookingData();
+  }
+  notify("İade nedeni kaydedildi ve bilet iade edildi.");
+  renderVendor();
+}
+
 async function handleLogin(form) {
   const data = new FormData(form);
   const email = String(data.get("email")).trim().toLowerCase();
@@ -3749,6 +4055,7 @@ async function handleLogin(form) {
       role: email === ADMIN_EMAIL ? "admin" : "parent",
       full_name: email,
     };
+    loadReadNotificationsLocal();
     notify("Demo modda giriş yapıldı. Supabase ayarları girilince gerçek oturum açılır.");
     setRoute("home");
     return;
@@ -3791,6 +4098,7 @@ async function handleSignup(form) {
   if (!state.supabaseReady) {
     state.currentUser = { id: `demo-${Date.now()}`, email };
     state.authProfile = { id: state.currentUser.id, email, role, full_name: fullName };
+    loadReadNotificationsLocal();
     if (role === "vendor") {
       state.vendors.unshift({
         id: `ven-${Date.now()}`,
@@ -3993,6 +4301,18 @@ document.addEventListener("click", async (event) => {
   if (!target) return;
 
   if (target.dataset.route) setRoute(target.dataset.route);
+  if (target.hasAttribute("data-online-courses")) {
+    event.preventDefault();
+    setRoute("home");
+    setTimeout(() => {
+      const form = app.querySelector("#filters");
+      if (!form) return;
+      form.elements.type.value = "Online";
+      form.elements.sort.value = "online";
+      app.querySelector("#results")?.scrollIntoView({ behavior: "smooth" });
+      renderActivityGrid(filterActivities(new FormData(form)));
+    }, 0);
+  }
   if (target.dataset.scroll) document.querySelector(`#${target.dataset.scroll}`)?.scrollIntoView({ behavior: "smooth" });
   if (target.dataset.detail) setRoute("detail", target.dataset.detail);
   if (target.dataset.vendorDetail) setRoute("vendorDetail", target.dataset.vendorDetail);
@@ -4002,7 +4322,7 @@ document.addEventListener("click", async (event) => {
     updateNav();
   }
   if (target.dataset.openNotification) {
-    state.readNotifications.add(target.dataset.openNotification);
+    await markNotificationRead(target.dataset.openNotification);
     state.notificationOpen = false;
     if (target.dataset.notificationTab) {
       if (target.dataset.notificationRoute === "admin") state.adminTab = target.dataset.notificationTab;
@@ -4012,7 +4332,7 @@ document.addEventListener("click", async (event) => {
     else setRoute(target.dataset.notificationRoute || "home");
   }
   if (target.hasAttribute("data-mark-notifications-read")) {
-    notificationItems().forEach((item) => state.readNotifications.add(item.id));
+    await markAllNotificationsRead();
     state.notificationOpen = false;
     updateNav();
   }
@@ -4041,7 +4361,9 @@ document.addEventListener("click", async (event) => {
     state.vendorTab = "new";
     renderVendor();
   }
-  if (target.dataset.deleteActivity) deleteActivity(target.dataset.deleteActivity);
+  if (target.dataset.cancelActivity) await cancelActivityWithReason(target.dataset.cancelActivity);
+  if (target.dataset.deleteActivity) await deleteActivity(target.dataset.deleteActivity);
+  if (target.dataset.vendorRefundBooking) await vendorRefundBooking(target.dataset.vendorRefundBooking);
   if (target.dataset.editExpense) {
     state.editingExpenseId = target.dataset.editExpense;
     state.vendorTab = "revenue";

@@ -153,6 +153,7 @@ create table if not exists public.bookings (
   status public.booking_status not null default 'draft',
   participant_count int not null default 1,
   total_amount numeric(12, 2) not null,
+  cancel_reason text,
   cancelled_at timestamptz,
   created_at timestamptz not null default now()
 );
@@ -273,6 +274,14 @@ create table if not exists public.subscription_plans (
 );
 
 alter table public.bookings add column if not exists cancelled_at timestamptz;
+alter table public.bookings add column if not exists cancel_reason text;
+
+create table if not exists public.notification_reads (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  notification_id text not null,
+  read_at timestamptz not null default now(),
+  primary key (user_id, notification_id)
+);
 
 insert into public.site_settings (key, value)
 values
@@ -503,6 +512,7 @@ alter table public.payments enable row level security;
 alter table public.commissions enable row level security;
 alter table public.vendor_expenses enable row level security;
 alter table public.vendor_messages enable row level security;
+alter table public.notification_reads enable row level security;
 alter table public.site_settings enable row level security;
 alter table public.social_links enable row level security;
 alter table public.footer_links enable row level security;
@@ -736,6 +746,11 @@ drop policy if exists "support tickets admin answer" on public.support_tickets;
 create policy "support tickets admin answer" on public.support_tickets
 for update using (public.is_admin())
 with check (public.is_admin());
+
+drop policy if exists "notification reads owner access" on public.notification_reads;
+create policy "notification reads owner access" on public.notification_reads
+for all using (user_id = auth.uid())
+with check (user_id = auth.uid());
 
 drop policy if exists "admin payments" on public.payments;
 create policy "admin payments" on public.payments
