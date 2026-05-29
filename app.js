@@ -519,7 +519,6 @@ function startAutoRefresh() {
     if (!state.supabaseReady || !state.currentUser) return;
     await loadMarketplaceData();
     updateNav();
-    if (["admin", "vendor", "bookings", "support"].includes(state.route)) render();
   }, 30000);
 }
 
@@ -1587,6 +1586,7 @@ function canCancelBooking(booking) {
   const found = getSession(booking.sessionId);
   if (!found) return false;
   const cancellableStatuses = ["confirmed", "pending_payment"];
+  if (isVendor()) return cancellableStatuses.includes(booking.status);
   return isParent() && cancellableStatuses.includes(booking.status) && new Date(found.session.start).getTime() - Date.now() >= 24 * 60 * 60 * 1000;
 }
 
@@ -1596,15 +1596,16 @@ async function cancelBooking(id) {
     notify("Etkinliğe 24 saatten az kaldığı için iptal yapılamaz.");
     return;
   }
-  booking.status = "cancelled_by_user";
+  const nextStatus = isVendor() ? "cancelled_by_vendor" : "cancelled_by_user";
+  booking.status = nextStatus;
   const found = getSession(booking.sessionId);
   if (found) found.session.reserved = Math.max(0, found.session.reserved - (booking.participantCount || booking.childIds?.length || 1));
   if (state.supabaseReady && isUuid(id)) {
-    const { error } = await state.supabaseClient.from("bookings").update({ status: "cancelled_by_user" }).eq("id", id);
+    const { error } = await state.supabaseClient.from("bookings").update({ status: nextStatus }).eq("id", id);
     if (error) notify(`İptal yerelde yapıldı; Supabase güncellenemedi: ${error.message}`);
   }
   notify("Rezervasyon iptal edildi.");
-  renderBookings();
+  isVendor() ? renderVendor() : renderBookings();
 }
 
 function bookingParticipantSummary(booking) {
@@ -1638,6 +1639,7 @@ function renderVendor() {
         <div class="vendor-header-profile">
           <span class="vendor-logo-thumb">${vendor.logoUrl ? `<img src="${vendor.logoUrl}" alt="${vendor.name} logo" />` : userInitials()}</span>
           ${statusPill(vendor.status)}
+          <button class="ghost-action danger-action" data-logout>Çıkış yap</button>
         </div>
       </div>
       <div class="dashboard-layout">
@@ -1767,12 +1769,12 @@ function bookingTable(bookings) {
       <h3>Satılan etkinlikler</h3>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Etkinlik</th><th>Seans</th><th>Satın alan</th><th>Katılımcı çocuk</th><th>Tutar</th><th>Durum</th><th>Detay</th></tr></thead>
+          <thead><tr><th>Etkinlik</th><th>Seans</th><th>Satın alan</th><th>Katılımcı çocuk</th><th>Tutar</th><th>Durum</th><th>Aksiyon</th></tr></thead>
           <tbody>${
             bookings.length
               ? bookings.map((booking) => {
                   const { activity, session } = getSession(booking.sessionId);
-                  return `<tr><td>${activity.title}</td><td>${dateTime(session.start)}</td><td>${booking.buyerName || booking.buyerEmail || "-"}</td><td>${bookingParticipantSummary(booking)}</td><td>${money(booking.totalAmount)}</td><td>${statusPill(booking.status)}</td><td><button class="ghost-action" data-detail="${activity.id}">Etkinlik</button></td></tr>`;
+                  return `<tr><td>${activity.title}</td><td>${dateTime(session.start)}</td><td>${booking.buyerName || booking.buyerEmail || "-"}</td><td>${bookingParticipantSummary(booking)}</td><td>${money(booking.totalAmount)}</td><td>${statusPill(booking.status)}</td><td><div class="button-row"><button class="ghost-action" data-detail="${activity.id}">Etkinlik</button>${canCancelBooking(booking) ? `<button class="ghost-action danger-action" data-cancel-booking="${booking.id}">İptal et</button>` : ""}</div></td></tr>`;
                 }).join("")
               : `<tr><td colspan="7">Henüz rezervasyon yok.</td></tr>`
           }</tbody>
@@ -2585,6 +2587,8 @@ async function handleSignup(form) {
 
 async function handleLogout() {
   const client = state.supabaseReady ? state.supabaseClient : null;
+  if (state.autoRefreshTimer) clearInterval(state.autoRefreshTimer);
+  state.autoRefreshTimer = null;
   state.currentUser = null;
   state.authProfile = null;
   state.vendorIds = [];

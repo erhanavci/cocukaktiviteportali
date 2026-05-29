@@ -507,6 +507,23 @@ create policy "bookings owner cancel" on public.bookings
 for update using (user_id = auth.uid())
 with check (user_id = auth.uid());
 
+drop policy if exists "bookings vendor cancel" on public.bookings;
+create policy "bookings vendor cancel" on public.bookings
+for update using (public.is_admin() or exists (
+  select 1
+  from public.activity_sessions s
+  join public.activities a on a.id = s.activity_id
+  join public.vendor_users vu on vu.vendor_id = a.vendor_id
+  where s.id = bookings.session_id and vu.user_id = auth.uid()
+))
+with check (public.is_admin() or exists (
+  select 1
+  from public.activity_sessions s
+  join public.activities a on a.id = s.activity_id
+  join public.vendor_users vu on vu.vendor_id = a.vendor_id
+  where s.id = bookings.session_id and vu.user_id = auth.uid()
+));
+
 drop policy if exists "booking participants owner access" on public.booking_participants;
 create policy "booking participants owner access" on public.booking_participants
 for all using (public.is_admin() or exists (
