@@ -1073,6 +1073,11 @@ h3 {
   background: var(--coral);
 }
 
+.social-row a i {
+  font-size: 18px;
+  line-height: 1;
+}
+
 .social-row a span,
 .social-row a span::before,
 .social-row a span::after {

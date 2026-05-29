@@ -26,6 +26,7 @@ const state = {
   vendorExpenses: [],
   vendorMessages: [],
   selectedMessageVendorId: null,
+  selectedAdminVendorId: null,
   siteSettings: {
     brandName: "Minik Kaşifler",
     brandAccent: "Çocuk Aktivite Portalı",
@@ -809,6 +810,11 @@ async function refreshVendorMessages() {
   if (!state.supabaseReady || !state.currentUser || (!isVendor() && !isAdmin())) return;
   const activeForm = document.activeElement?.closest?.("#vendorMessageForm");
   await loadVendorMessages();
+  if (isAdmin()) {
+    await Promise.all([loadBookingData(), loadSupportTickets()]);
+  } else if (isVendor()) {
+    await loadBookingData();
+  }
   updateNav();
   if (activeForm) return;
   if (isVendor() && state.route === "vendor" && state.vendorTab === "messages") renderVendor();
@@ -866,7 +872,7 @@ async function loadBookingData() {
 
   const { data, error } = await state.supabaseClient
     .from("bookings")
-    .select("*, user:profiles(email, full_name), participants:booking_participants(child_id, child:children(id, name, age))")
+    .select("*, user:profiles(email, full_name), participants:booking_participants(child_id, notes, child:children(id, name, age))")
     .order("created_at", { ascending: false });
   if (error || !data) return;
 
@@ -885,6 +891,7 @@ async function loadBookingData() {
         childId: booking.participants?.[0]?.child_id ?? "",
         childIds: (booking.participants ?? []).map((participant) => participant.child_id),
         childNames: (booking.participants ?? []).map((participant) => participant.child?.name).filter(Boolean),
+        childNotes: (booking.participants ?? []).map((participant) => participant.notes).filter(Boolean),
         participantCount: Number(booking.participant_count ?? booking.participants?.length ?? 1),
         buyerName: booking.user?.full_name || booking.user?.email || "",
         buyerEmail: booking.user?.email || "",
@@ -895,7 +902,7 @@ async function loadBookingData() {
         commissionAmount: Math.round(totalAmount * commissionRate),
         createdAt: booking.created_at,
         cancelledAt: booking.cancelled_at,
-        notes: "",
+        notes: (booking.participants ?? []).map((participant) => participant.notes).filter(Boolean).join(" · "),
       };
     })
     .filter(Boolean);
@@ -1398,13 +1405,13 @@ function categoryIcon(category) {
 }
 
 function socialIcon(platform) {
-  const text = platform.toLocaleLowerCase("tr-TR");
-  if (text.includes("instagram")) return "social-instagram";
-  if (text.includes("facebook")) return "social-facebook";
-  if (text.includes("youtube")) return "social-youtube";
-  if (text.includes("x") || text.includes("twitter")) return "social-x";
-  if (text.includes("linkedin")) return "social-linkedin";
-  return "social-generic";
+  const text = platform.toLowerCase();
+  if (text.includes("instagram")) return "fa-brands fa-instagram";
+  if (text.includes("facebook")) return "fa-brands fa-facebook-f";
+  if (text.includes("youtube")) return "fa-brands fa-youtube";
+  if (text.includes("x") || text.includes("twitter")) return "fa-brands fa-x-twitter";
+  if (text.includes("linkedin")) return "fa-brands fa-linkedin-in";
+  return "fa-solid fa-link";
 }
 
 function renderSiteFooter() {
@@ -1417,7 +1424,7 @@ function renderSiteFooter() {
         <div class="footer-brand"><span class="brand-mark">MK</span><strong>${state.siteSettings.brandName}</strong></div>
         <p>${state.siteSettings.brandAccent}. Çocukların eğlenerek öğrendiği, ebeveynlerin güvenle tercih ettiği aktivite rehberi.</p>
         <div class="social-row">
-          ${state.socialLinks.filter((link) => link.isActive).map((link) => `<a class="${socialIcon(link.platform)}" href="${link.url}" target="_blank" rel="noreferrer" aria-label="${link.platform}"><span aria-hidden="true"></span></a>`).join("")}
+          ${state.socialLinks.filter((link) => link.isActive).map((link) => `<a href="${link.url}" target="_blank" rel="noreferrer" aria-label="${link.platform}"><i class="${socialIcon(link.platform)}" aria-hidden="true"></i></a>`).join("")}
         </div>
       </section>
       ${groups
@@ -2094,6 +2101,7 @@ async function createBooking(form) {
   }
   const vendor = getVendor(activity.vendorId);
   const paymentMethod = formData.get("paymentMethod");
+  const notes = String(formData.get("notes") || "").trim();
   const status = paymentMethod === "online" ? "confirmed" : "confirmed";
   const totalAmount = session.price * participantCount;
   session.reserved += participantCount;
@@ -2113,9 +2121,10 @@ async function createBooking(form) {
     buyerName: state.authProfile?.full_name || state.currentUser.email || "",
     buyerEmail: state.currentUser.email || "",
     childNames: childIds.map((childId) => state.children.find((child) => child.id === childId)?.name).filter(Boolean),
+    childNotes: notes ? [notes] : [],
     createdAt: new Date().toISOString(),
     cancelledAt: null,
-    notes: formData.get("notes"),
+    notes,
   };
   state.bookings.unshift(booking);
 
@@ -2132,7 +2141,7 @@ async function createBooking(form) {
       booking.id = insertedBooking.id;
       const participants = childIds
         .filter(isUuid)
-        .map((childId) => ({ booking_id: insertedBooking.id, child_id: childId }));
+        .map((childId) => ({ booking_id: insertedBooking.id, child_id: childId, notes }));
       if (participants.length) await state.supabaseClient.from("booking_participants").insert(participants);
     }
   }
@@ -2532,14 +2541,14 @@ function bookingTable(bookings) {
       <h3>Satılan etkinlikler</h3>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Etkinlik</th><th>Seans</th><th>Satın alan</th><th>Katılımcı çocuk</th><th>Tutar</th><th>Durum</th><th>Aksiyon</th></tr></thead>
+          <thead><tr><th>Etkinlik</th><th>Seans</th><th>Satın alan</th><th>Katılımcı çocuk</th><th>Not</th><th>Tutar</th><th>Durum</th><th>Aksiyon</th></tr></thead>
           <tbody>${
             bookings.length
               ? bookings.map((booking) => {
                   const { activity, session } = getSession(booking.sessionId);
-                  return `<tr><td>${activity.title}</td><td>${dateTime(session.start)}</td><td>${booking.buyerName || booking.buyerEmail || "-"}</td><td>${bookingParticipantSummary(booking)}</td><td>${money(booking.totalAmount)}</td><td>${statusPill(booking.status)}</td><td><div class="button-row"><button class="ghost-action" data-detail="${activity.id}">Etkinlik</button>${canCancelBooking(booking) ? `<button class="ghost-action danger-action" data-cancel-booking="${booking.id}">İptal et</button>` : ""}</div></td></tr>`;
+                  return `<tr><td>${activity.title}</td><td>${dateTime(session.start)}</td><td>${booking.buyerName || booking.buyerEmail || "-"}</td><td>${bookingParticipantSummary(booking)}</td><td>${booking.notes || "-"}</td><td>${money(booking.totalAmount)}</td><td>${statusPill(booking.status)}</td><td><div class="button-row"><button class="ghost-action" data-detail="${activity.id}">Etkinlik</button>${canCancelBooking(booking) ? `<button class="ghost-action danger-action" data-cancel-booking="${booking.id}">İptal et</button>` : ""}</div></td></tr>`;
                 }).join("")
-              : `<tr><td colspan="7">Henüz rezervasyon yok.</td></tr>`
+              : `<tr><td colspan="8">Henüz rezervasyon yok.</td></tr>`
           }</tbody>
         </table>
       </div>
@@ -3300,12 +3309,15 @@ function adminPanel() {
   if (state.adminTab === "approvals") {
     const pendingVendors = state.vendors.filter((vendor) => vendor.status === "pending" && (!state.supabaseReady || isUuid(vendor.id)));
     const pendingActivities = state.activities.filter((activity) => activity.status === "pending" && (!state.supabaseReady || isUuid(activity.id)));
+    const approvedActivities = state.activities.filter((activity) => activity.status === "approved");
     return `
       <div class="panel">
         <h3>Onay bekleyen firmalar</h3>
         ${pendingVendors.map((vendor) => `<div class="mini-card"><strong>${vendor.name}</strong><p class="muted">${vendor.district} · ${vendor.plan}</p><button class="primary-action" data-approve-vendor="${vendor.id}">Firmayı onayla</button></div>`).join("") || `<div class="empty-state">Firma onayı beklemiyor.</div>`}
         <h3>Onay bekleyen etkinlikler</h3>
         ${pendingActivities.map((activity) => `<div class="mini-card child-card"><div><strong>${activity.title}</strong><p class="muted">${activity.category} · ${getVendor(activity.vendorId)?.name ?? "Firma"}</p></div><div class="button-row"><button class="ghost-action" data-detail="${activity.id}">Önizle</button><button class="primary-action" data-approve-activity="${activity.id}">Etkinliği onayla</button></div></div>`).join("") || `<div class="empty-state">Etkinlik onayı beklemiyor.</div>`}
+        <h3>Onaylanmış etkinlikler</h3>
+        ${approvedActivities.map((activity) => `<div class="mini-card child-card"><div><strong>${activity.title}</strong><p class="muted">${activity.category} · ${getVendor(activity.vendorId)?.name ?? "Firma"}</p></div><div class="button-row"><span class="tag">Onaylanmış etkinlik</span><button class="ghost-action" data-detail="${activity.id}">Görüntüle</button></div></div>`).join("") || `<div class="empty-state">Henüz onaylanmış etkinlik yok.</div>`}
       </div>
     `;
   }
@@ -3361,6 +3373,7 @@ function adminPanel() {
 }
 
 function adminVendorsPanel() {
+  const selectedVendor = state.vendors.find((vendor) => vendor.id === state.selectedAdminVendorId);
   return `
     <div class="panel">
       <h3>Firmalar</h3>
@@ -3376,6 +3389,7 @@ function adminVendorsPanel() {
                         <p class="muted">${vendor.district} · ${vendor.plan} · ${statusPill(vendor.status)}</p>
                       </div>
                       <div class="button-row">
+                        <button class="ghost-action" data-admin-vendor-detail="${vendor.id}">Detay</button>
                         ${vendor.status !== "approved" ? `<button class="primary-action" data-approve-vendor="${vendor.id}">Onayla</button>` : ""}
                         ${vendor.status !== "blocked" ? `<button class="ghost-action danger-action" data-block-vendor="${vendor.id}">Sistemden çıkar</button>` : `<button class="ghost-action" data-approve-vendor="${vendor.id}">Tekrar aktifleştir</button>`}
                       </div>
@@ -3385,6 +3399,41 @@ function adminVendorsPanel() {
                 .join("")
             : `<div class="empty-state">Firma kaydı yok.</div>`
         }
+      </div>
+      ${selectedVendor ? adminVendorDetail(selectedVendor) : ""}
+    </div>
+  `;
+}
+
+function adminVendorDetail(vendor) {
+  const activities = state.activities.filter((activity) => activity.vendorId === vendor.id);
+  const activeActivities = activities.filter((activity) => activity.status === "approved");
+  const vendorBookings = state.bookings.filter((booking) => activities.some((activity) => activity.id === booking.activityId));
+  return `
+    <div class="support-reply">
+      <div class="panel-heading">
+        <div>
+          <h3>${vendor.name}</h3>
+          <p class="muted">${vendor.city || ""} ${vendor.district || ""} · ${statusPill(vendor.status)}</p>
+        </div>
+        <button class="ghost-action compact-action" data-admin-vendor-detail="">Kapat</button>
+      </div>
+      <div class="metrics-grid">
+        <div class="metric-card"><span>Aktif kurs</span><strong>${activeActivities.length}</strong></div>
+        <div class="metric-card"><span>Satış</span><strong>${vendorBookings.length}</strong></div>
+        <div class="metric-card"><span>Ciro</span><strong>${money(vendorBookings.reduce((sum, booking) => sum + booking.totalAmount, 0))}</strong></div>
+      </div>
+      <h3>Aktif kurslar</h3>
+      <div class="sessions">${activeActivities.map((activity) => `<div class="mini-card child-card"><div><strong>${activity.title}</strong><p class="muted">${activity.category} · ${remainingLabel(activity)}</p></div><span class="tag">Onaylanmış etkinlik</span></div>`).join("") || `<div class="empty-state">Aktif kurs yok.</div>`}</div>
+      <h3>Satışlar</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Etkinlik</th><th>Satın alan</th><th>Çocuk</th><th>Tutar</th><th>Durum</th></tr></thead>
+          <tbody>${vendorBookings.map((booking) => {
+            const found = getSession(booking.sessionId);
+            return `<tr><td>${found?.activity.title || booking.activityId}</td><td>${booking.buyerName || booking.buyerEmail || "-"}</td><td>${bookingParticipantSummary(booking)}</td><td>${money(booking.totalAmount)}</td><td>${statusPill(booking.status)}</td></tr>`;
+          }).join("") || `<tr><td colspan="5">Satış yok.</td></tr>`}</tbody>
+        </table>
       </div>
     </div>
   `;
@@ -3463,7 +3512,7 @@ function adminPaymentTable() {
       <div class="table-wrap">
         <table>
           <thead><tr><th>Etkinlik</th><th>Firma</th><th>Satın alan</th><th>Katılımcı çocuk</th><th>Tutar</th><th>Durum</th><th>Aksiyon</th></tr></thead>
-          <tbody>${rows.map(({ booking, activity, vendor }) => `<tr><td>${activity?.title ?? booking.id}</td><td>${vendor?.name ?? "-"}</td><td>${booking.buyerName || booking.buyerEmail || "-"}</td><td>${bookingParticipantSummary(booking)}</td><td>${money(booking.totalAmount)}</td><td>${statusPill(booking.status)}</td><td><button class="ghost-action" data-refund="${booking.id}">İade başlat</button></td></tr>`).join("") || `<tr><td colspan="7">Satış kaydı yok.</td></tr>`}</tbody>
+          <tbody>${rows.map(({ booking, activity, vendor }) => `<tr><td>${activity?.title ?? booking.id}</td><td>${vendor?.name ?? "-"}</td><td>${booking.buyerName || booking.buyerEmail || "-"}</td><td>${bookingParticipantSummary(booking)}</td><td>${money(booking.totalAmount)}</td><td>${statusPill(booking.status)}</td><td>${booking.status === "refunded" ? `<span class="tag">İade edildi</span>` : `<button class="ghost-action" data-refund="${booking.id}">İade başlat</button>`}</td></tr>`).join("") || `<tr><td colspan="7">Satış kaydı yok.</td></tr>`}</tbody>
         </table>
       </div>
     </div>
@@ -3653,6 +3702,34 @@ async function approveActivity(id) {
   }
   state.notifications.unshift({ text: "Etkinlik onaylandı.", read: false });
   notify("Etkinlik onaylandı ve public listelerde görünecek.");
+  renderAdmin();
+}
+
+async function refundBooking(id) {
+  const booking = state.bookings.find((item) => item.id === id);
+  if (!booking) return;
+  if (booking.status === "refunded") {
+    notify("Bu satış zaten iade edilmiş.");
+    return;
+  }
+  booking.status = "refunded";
+  booking.cancelledAt = new Date().toISOString();
+  syncSessionReservationsFromBookings();
+
+  if (state.supabaseReady && isUuid(id)) {
+    const { error } = await state.supabaseClient
+      .from("bookings")
+      .update({ status: "refunded", cancelled_at: booking.cancelledAt })
+      .eq("id", id);
+    if (error) {
+      notify(`İade yerelde işlendi; Supabase güncellenemedi: ${error.message}`);
+      renderAdmin();
+      return;
+    }
+    await loadBookingData();
+  }
+
+  notify("İade başlatıldı ve satış durumu iade edildi olarak güncellendi.");
   renderAdmin();
 }
 
@@ -3997,14 +4074,15 @@ document.addEventListener("click", async (event) => {
   if (target.dataset.blockVendor) {
     blockVendor(target.dataset.blockVendor);
   }
+  if (target.hasAttribute("data-admin-vendor-detail")) {
+    state.selectedAdminVendorId = target.dataset.adminVendorDetail || null;
+    renderAdmin();
+  }
   if (target.dataset.approveActivity) {
     approveActivity(target.dataset.approveActivity);
   }
   if (target.dataset.refund) {
-    const booking = state.bookings.find((item) => item.id === target.dataset.refund);
-    if (booking) booking.status = "refunded";
-    notify("İade süreci başlatıldı; komisyon ters kaydı simüle edildi.");
-    renderAdmin();
+    await refundBooking(target.dataset.refund);
   }
   if (target.dataset.cancelBooking) cancelBooking(target.dataset.cancelBooking);
   if (target.dataset.notify) notify(target.dataset.notify);
