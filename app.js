@@ -90,6 +90,7 @@ const state = {
       galleryImages: [],
       description:
         "Çocuklar kendi seramik kaselerini tasarlar, renk karışımlarını öğrenir ve güvenli atölye ekipmanlarıyla çalışır.",
+      vendorNote: "Atölye başlamadan 10 dakika önce alanda olmanızı rica ederiz.",
       cancellation: "Etkinlikten 24 saat öncesine kadar ücretsiz iptal.",
       parentParticipation: "İlk 15 dakika ebeveyn eşliği önerilir.",
       sessions: [
@@ -118,6 +119,7 @@ const state = {
       galleryImages: [],
       description:
         "Algoritma mantığı, sensörler ve takım çalışmasıyla çocukların problem çözme kaslarını güçlendiren uygulamalı program.",
+      vendorNote: "Etkinlikte koruyucu gözlük ve önlük firma tarafından sağlanır.",
       cancellation: "İlk ders başlamadan 24 saat öncesine kadar ücretsiz iptal.",
       parentParticipation: "Ebeveyn katılımı gerekmiyor.",
       sessions: [
@@ -146,6 +148,7 @@ const state = {
       galleryImages: [],
       description:
         "Duyusal oyun, ritim ve güvenli serbest hareket alanıyla 0-3 yaş dönemine uygun ebeveynli buluşma.",
+      vendorNote: "Rahat kıyafet ve kaymaz çorap önerilir.",
       cancellation: "Etkinlikten 24 saat öncesine kadar ücretsiz iptal.",
       parentParticipation: "Ebeveyn katılımı zorunludur.",
       sessions: [
@@ -173,6 +176,7 @@ const state = {
       galleryImages: [],
       description:
         "Müze anlatımı, eskiz defteri ve mini yaratıcı görevlerle çocuklara sanat tarihini deneyimleten gezi.",
+      vendorNote: "Müze girişinde firma görevlisi ile buluşulur.",
       cancellation: "Satıcı ve admin onaylı iptal/iade süreci uygulanır.",
       parentParticipation: "Ebeveynler müze lobisinde bekleyebilir.",
       sessions: [
@@ -493,6 +497,7 @@ async function loadMarketplaceData() {
       imageUrl: activity.image_url ?? "",
       galleryImages: activity.gallery_image_urls ?? [],
       description: activity.description,
+      vendorNote: activity.vendor_note ?? "",
       cancellation: activity.cancellation_policy,
       parentParticipation: "Satıcı bilgisinde belirtilecek.",
       sessions: (activity.sessions ?? []).map((session) => ({
@@ -927,6 +932,22 @@ function notify(message) {
   notify.timer = setTimeout(() => toast.classList.remove("visible"), 2600);
 }
 
+function showPopup(title, message) {
+  document.querySelector("#messageModal")?.remove();
+  const modal = document.createElement("div");
+  modal.id = "messageModal";
+  modal.className = "message-modal";
+  modal.innerHTML = `
+    <div class="message-modal-card">
+      <p class="eyebrow">Satıcı notu</p>
+      <h3>${title}</h3>
+      <p>${message}</p>
+      <button class="primary-action" data-close-modal>Kapat</button>
+    </div>
+  `;
+  document.body.appendChild(modal);
+}
+
 function statusPill(status) {
   const map = {
     approved: ["Onaylı", "green"],
@@ -1304,12 +1325,14 @@ function renderDetail() {
           <div class="tag-row">
             <span class="tag">${activity.type}</span>
             <span class="tag">${activity.participationType === "private" ? "Bire bir etkinlik" : "Toplu etkinlik"}</span>
+            ${activity.vendorNote ? `<span class="tag">Satıcı notu var</span>` : ""}
             <span class="tag">${favoriteCount(activity.id)} favori</span>
             <span class="tag">${remainingLabel(activity)}</span>
             ${activity.address ? `<span class="tag">${activity.address}</span>` : ""}
             <span class="tag">${activity.parentParticipation}</span>
             <span class="tag">${activity.cancellation}</span>
           </div>
+          ${activity.vendorNote ? `<div class="support-reply"><strong>Satıcı notu</strong><p>${activity.vendorNote}</p></div>` : ""}
           <h3>Konum</h3>
           <div class="map-frame">
             <iframe title="${activity.title} konumu" src="${mapEmbedUrl(activity)}" loading="lazy"></iframe>
@@ -1475,6 +1498,7 @@ async function createBooking(form) {
 
   notify("Rezervasyon onaylandı, komisyon kaydı oluşturuldu.");
   setRoute("bookings");
+  if (activity.vendorNote) showPopup(activity.title, activity.vendorNote);
 }
 
 function updateBookingEstimate(form = document.querySelector("#bookingForm")) {
@@ -1881,6 +1905,7 @@ function newActivityForm(vendor) {
         }
         <div class="wide media-grid" id="galleryPreview"></div>
         <label class="wide"><span>Açıklama</span><textarea name="description" required>${editingActivity?.description ?? ""}</textarea></label>
+        <label class="wide"><span>Satın alma sonrası kullanıcıya gösterilecek not</span><textarea name="vendorNote" placeholder="Örn. Etkinlikten 10 dakika önce geliniz, yanınızda çorap getiriniz...">${editingActivity?.vendorNote ?? ""}</textarea></label>
         <div class="wide map-frame compact-map">
           <iframe title="Etkinlik konum önizlemesi" src="${mapEmbedUrl(editingActivity ?? { locationQuery: "İstanbul" })}" loading="lazy"></iframe>
         </div>
@@ -1979,6 +2004,7 @@ async function createActivity(form) {
     imageUrl,
     galleryImages,
     description: data.get("description"),
+    vendorNote: String(data.get("vendorNote") || "").trim(),
     cancellation: "Etkinlikten 24 saat öncesine kadar ücretsiz iptal.",
     parentParticipation: "Satıcı tarafından belirlenecek.",
     sessions,
@@ -2036,6 +2062,7 @@ async function createActivity(form) {
         title: data.get("title"),
         slug: `${slugify(data.get("title"))}-${Date.now()}`,
         description: data.get("description"),
+        vendor_note: String(data.get("vendorNote") || "").trim(),
         min_age: Number(data.get("minAge")),
         max_age: Number(data.get("maxAge")),
         activity_type: sessions.length > 1 ? "Çoklu seans" : "Tek seans",
@@ -2719,6 +2746,7 @@ document.addEventListener("click", (event) => {
   if (target.dataset.route) setRoute(target.dataset.route);
   if (target.dataset.scroll) document.querySelector(`#${target.dataset.scroll}`)?.scrollIntoView({ behavior: "smooth" });
   if (target.dataset.detail) setRoute("detail", target.dataset.detail);
+  if (target.hasAttribute("data-close-modal")) target.closest(".message-modal")?.remove();
   if (target.hasAttribute("data-notifications")) {
     state.notificationOpen = !state.notificationOpen;
     updateNav();

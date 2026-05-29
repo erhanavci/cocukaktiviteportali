@@ -100,6 +100,7 @@ create table if not exists public.activities (
   title text not null,
   slug text not null unique,
   description text not null,
+  vendor_note text,
   min_age int not null check (min_age >= 0),
   max_age int not null check (max_age <= 18 and max_age >= min_age),
   activity_type text not null,
@@ -123,6 +124,7 @@ alter table public.activities add column if not exists lng numeric(10, 7);
 alter table public.activities add column if not exists image_url text;
 alter table public.activities add column if not exists gallery_image_urls text[] not null default '{}';
 alter table public.activities add column if not exists participation_type text not null default 'group';
+alter table public.activities add column if not exists vendor_note text;
 alter table public.activities drop constraint if exists activities_participation_type_check;
 alter table public.activities add constraint activities_participation_type_check check (participation_type in ('group', 'private'));
 
