@@ -21,6 +21,7 @@ const state = {
   notificationBaselineReady: false,
   soundUnlocked: false,
   audioContext: null,
+  parallaxHandler: null,
   supportTickets: [],
   vendorExpenses: [],
   vendorMessages: [],
@@ -1334,7 +1335,7 @@ function renderCategoryShowcase() {
   const palette = ["blue", "green", "orange", "purple", "red", "yellow"];
   grid.innerHTML = state.categories
     .slice(0, 12)
-    .map((category) => `<button class="category-tile ${categoryTone(category, palette)}" data-category-filter="${category}"><span class="category-icon ${categoryIcon(category)}" aria-hidden="true"></span><strong>${category}</strong></button>`)
+    .map((category) => `<button class="category-tile ${categoryTone(category, palette)}" data-category-filter="${category}"><span class="category-icon" aria-hidden="true"><i class="${categoryIcon(category)}"></i></span><strong>${category}</strong></button>`)
     .join("");
 }
 
@@ -1351,15 +1352,17 @@ function categoryTone(category, fallbackPalette) {
 
 function categoryIcon(category) {
   const text = category.toLocaleLowerCase("tr-TR");
-  if (text.includes("sanat")) return "icon-palette";
-  if (text.includes("bilim") || text.includes("stem")) return "icon-flask";
-  if (text.includes("kod")) return "icon-code";
-  if (text.includes("spor")) return "icon-ball";
-  if (text.includes("müzik") || text.includes("dans")) return "icon-music";
-  if (text.includes("doğa")) return "icon-tree";
-  if (text.includes("müze")) return "icon-museum";
-  if (text.includes("oyun")) return "icon-play";
-  return "icon-star";
+  if (text.includes("sanat")) return "fa-solid fa-palette";
+  if (text.includes("bilim") || text.includes("stem")) return "fa-solid fa-flask";
+  if (text.includes("kod")) return "fa-solid fa-laptop-code";
+  if (text.includes("spor")) return "fa-solid fa-basketball";
+  if (text.includes("müzik") || text.includes("dans")) return "fa-solid fa-music";
+  if (text.includes("doğa")) return "fa-solid fa-tree";
+  if (text.includes("müze")) return "fa-solid fa-landmark";
+  if (text.includes("oyun")) return "fa-solid fa-puzzle-piece";
+  if (text.includes("kamp")) return "fa-solid fa-campground";
+  if (text.includes("kurs")) return "fa-solid fa-book-open";
+  return "fa-solid fa-star";
 }
 
 function socialIcon(platform) {
@@ -1428,12 +1431,14 @@ function setActiveCategoryTile(category) {
 function setupParallaxDots() {
   const dots = [...document.querySelectorAll("[data-parallax]")];
   if (!dots.length) return;
+  if (state.parallaxHandler) window.removeEventListener("scroll", state.parallaxHandler);
   const moveDots = () => {
     const scrollY = window.scrollY || 0;
     dots.forEach((dot) => {
       dot.style.transform = `translate3d(0, ${scrollY * Number(dot.dataset.parallax || 0.12)}px, 0)`;
     });
   };
+  state.parallaxHandler = moveDots;
   moveDots();
   window.addEventListener("scroll", moveDots, { passive: true });
 }

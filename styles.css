@@ -205,39 +205,47 @@ main {
     #f7f9fc;
 }
 
-.parallax-dot {
+.global-orbs {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.orb {
   position: absolute;
-  z-index: 0;
-  border-radius: 50%;
-  opacity: 0.22;
+  border-radius: 999px;
+  opacity: 0.16;
   filter: blur(1px);
+  mix-blend-mode: multiply;
   pointer-events: none;
   will-change: transform;
 }
 
-.dot-accent {
-  top: 126px;
-  left: 5vw;
-  width: 250px;
-  height: 250px;
+.orb-accent {
+  top: 118px;
+  left: -42px;
+  width: 260px;
+  height: 260px;
   background: var(--accent);
 }
 
-.dot-teal {
-  right: 7vw;
-  bottom: 30px;
+.orb-teal {
+  right: -82px;
+  top: 380px;
   width: 360px;
   height: 360px;
   background: var(--teal);
 }
 
-.dot-coral {
-  left: 46%;
-  top: 40px;
-  width: 150px;
-  height: 150px;
+.orb-coral {
+  left: 48%;
+  top: 84px;
+  width: 154px;
+  height: 154px;
   background: var(--coral);
-  opacity: 0.12;
+  opacity: 0.1;
 }
 
 .hero-content-grid {
@@ -732,15 +740,15 @@ h3 {
   display: grid;
   place-items: center;
   gap: 10px;
-  min-height: 146px;
-  padding: 16px;
+  min-height: 152px;
+  padding: 18px 16px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 24px;
   background: #fff;
   font-family: var(--font-heading);
   box-shadow: 0 12px 34px rgba(23, 32, 38, 0.07);
   text-align: center;
-  transition: transform 180ms ease, box-shadow 180ms ease, background 180ms ease;
+  transition: transform 180ms ease, box-shadow 180ms ease, background 180ms ease, color 180ms ease;
 }
 
 .category-tile:hover {
@@ -758,157 +766,57 @@ h3 {
   box-shadow: 0 18px 42px rgba(255, 107, 107, 0.18);
 }
 
+.category-tile strong {
+  color: #172026;
+  transition: color 180ms ease;
+}
+
 .category-icon {
   position: relative;
   display: grid;
   place-items: center;
-  width: 58px;
-  height: 58px;
+  width: 62px;
+  height: 62px;
   border-radius: 50%;
   background: #fff;
   color: var(--teal-dark);
-  box-shadow: inset 0 0 0 1px var(--line);
-  transition: transform 180ms ease;
+  box-shadow: 0 10px 22px rgba(23, 32, 38, 0.06), inset 0 0 0 1px rgba(23, 32, 38, 0.05);
+  transition: transform 180ms ease, box-shadow 180ms ease;
 }
 
-.category-tile:hover .category-icon {
-  transform: scale(1.1) rotate(-4deg);
-}
-
-.category-icon::before,
-.category-icon::after {
-  content: "";
-  position: absolute;
-}
-
-.icon-palette::before {
-  width: 28px;
-  height: 22px;
-  border-radius: 50% 45% 55% 50%;
-  background: currentColor;
-}
-
-.icon-palette::after {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: -8px -4px 0 #fff, 8px -3px 0 #fff;
-}
-
-.icon-flask::before {
-  width: 22px;
-  height: 27px;
-  border: 4px solid currentColor;
-  border-top: 0;
-  border-radius: 4px 4px 12px 12px;
-}
-
-.icon-flask::after {
-  width: 12px;
-  height: 12px;
-  border: 4px solid currentColor;
-  border-bottom: 0;
-  top: 12px;
-}
-
-.icon-ball::before {
-  width: 28px;
-  height: 28px;
-  border: 4px solid currentColor;
-  border-radius: 50%;
-}
-
-.icon-ball::after {
-  width: 30px;
-  height: 4px;
-  background: currentColor;
-  transform: rotate(-25deg);
-}
-
-.icon-music::before {
-  width: 6px;
-  height: 28px;
-  background: currentColor;
-  border-radius: 4px;
-  box-shadow: 16px -6px 0 currentColor;
-}
-
-.icon-music::after {
-  width: 12px;
-  height: 12px;
-  bottom: 13px;
-  left: 16px;
-  border-radius: 50%;
-  background: currentColor;
-  box-shadow: 16px -6px 0 currentColor;
-}
-
-.icon-code::before {
-  content: "</>";
-  color: currentColor;
-  font-weight: 900;
-  font-size: 20px;
-}
-
-.icon-tree::before {
-  width: 30px;
-  height: 24px;
-  border-radius: 50% 50% 40% 40%;
-  background: currentColor;
-}
-
-.icon-tree::after {
-  width: 6px;
-  height: 20px;
-  bottom: 12px;
-  border-radius: 4px;
-  background: currentColor;
-}
-
-.icon-museum::before {
-  width: 32px;
-  height: 5px;
-  background: currentColor;
-  box-shadow: 0 22px 0 currentColor;
-}
-
-.icon-museum::after {
-  width: 26px;
-  height: 22px;
-  border-left: 5px solid currentColor;
-  border-right: 5px solid currentColor;
-  box-shadow: inset 7px 0 0 transparent, 7px 0 0 currentColor;
-}
-
-.icon-play::before {
-  width: 0;
-  height: 0;
-  border-top: 15px solid transparent;
-  border-bottom: 15px solid transparent;
-  border-left: 22px solid currentColor;
-  left: 22px;
-}
-
-.icon-star::before {
-  content: "★";
-  color: currentColor;
+.category-icon i {
   font-size: 28px;
   line-height: 1;
 }
 
-.category-tile.blue { background: #eef6ff; }
-.category-tile.green { background: #ecfbf8; }
-.category-tile.orange { background: #fff5e8; }
-.category-tile.purple { background: #f5efff; }
-.category-tile.red { background: #fff0ef; }
-.category-tile.yellow { background: #fff9d8; }
-.category-tile.blue .category-icon { color: #2563eb; }
-.category-tile.green .category-icon { color: var(--teal-dark); }
-.category-tile.orange .category-icon { color: #f97316; }
-.category-tile.purple .category-icon { color: #7c3aed; }
-.category-tile.red .category-icon { color: var(--coral); }
-.category-tile.yellow .category-icon { color: #d99b22; }
+.category-tile:hover .category-icon {
+  transform: scale(1.1) rotate(-4deg);
+  box-shadow: 0 14px 24px rgba(23, 32, 38, 0.14), inset 0 0 0 1px rgba(23, 32, 38, 0.04);
+}
+
+.category-tile:hover strong {
+  color: #fff;
+}
+
+.category-tile.blue { background: #eff6ff; }
+.category-tile.green { background: #ecfdf5; }
+.category-tile.orange { background: #fff7ed; }
+.category-tile.purple { background: #faf5ff; }
+.category-tile.red { background: #fef2f2; }
+.category-tile.yellow { background: #fefce8; }
+.category-tile.blue:hover { background: #3b82f6; }
+.category-tile.green:hover { background: #4ecdc4; }
+.category-tile.orange:hover { background: #fb923c; }
+.category-tile.purple:hover { background: #a855f7; }
+.category-tile.red:hover { background: #ff6b6b; }
+.category-tile.yellow:hover { background: #ffe66d; }
+.category-tile.yellow:hover strong { color: #172026; }
+.category-tile.blue .category-icon { color: #3b82f6; }
+.category-tile.green .category-icon { color: #14b8a6; }
+.category-tile.orange .category-icon { color: #fb923c; }
+.category-tile.purple .category-icon { color: #a855f7; }
+.category-tile.red .category-icon { color: #ff6b6b; }
+.category-tile.yellow .category-icon { color: #eab308; }
 
 .about-band {
   display: grid;
