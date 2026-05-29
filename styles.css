@@ -1854,6 +1854,18 @@ input[type="range"] {
   margin-bottom: 16px;
 }
 
+.admin-date-controls {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.1fr) repeat(2, minmax(150px, 0.8fr));
+  gap: 10px;
+  align-items: end;
+  margin: 12px 0 18px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7faf9;
+}
+
 .metric-card strong {
   display: block;
   margin-top: 8px;

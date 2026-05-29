@@ -5,7 +5,10 @@ const state = {
   selectedActivityId: null,
   selectedVendorId: null,
   vendorTab: "overview",
-  adminTab: "approvals",
+  adminTab: "dashboard",
+  adminDateRange: "all",
+  adminCustomStart: "",
+  adminCustomEnd: "",
   currentUser: null,
   authProfile: null,
   vendorIds: [],
@@ -2579,6 +2582,64 @@ function isToday(value) {
   return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate();
 }
 
+function dateRangeBounds(range = state.adminDateRange) {
+  const now = new Date();
+  const end = new Date(now);
+  end.setHours(23, 59, 59, 999);
+  let start = null;
+  if (range === "7d") start = new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000);
+  if (range === "1m") start = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+  if (range === "3m") start = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate());
+  if (range === "6m") start = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate());
+  if (range === "1y") start = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+  if (range === "custom") {
+    start = state.adminCustomStart ? new Date(`${state.adminCustomStart}T00:00:00`) : null;
+    const customEnd = state.adminCustomEnd ? new Date(`${state.adminCustomEnd}T23:59:59`) : end;
+    return { start, end: customEnd };
+  }
+  if (start) start.setHours(0, 0, 0, 0);
+  return { start, end };
+}
+
+function dateInAdminRange(value) {
+  if (state.adminDateRange === "all") return true;
+  if (!value) return false;
+  const date = new Date(value);
+  const { start, end } = dateRangeBounds();
+  return (!start || date >= start) && date <= end;
+}
+
+function filterBookingsByAdminDate(bookings = state.bookings) {
+  return bookings.filter((booking) => dateInAdminRange(booking.createdAt) || dateInAdminRange(booking.cancelledAt));
+}
+
+function adminDateControls() {
+  return `
+    <div class="admin-date-controls">
+      <label>
+        Tarih aralığı
+        <select data-admin-date-range>
+          <option value="all" ${state.adminDateRange === "all" ? "selected" : ""}>Tüm zamanlar</option>
+          <option value="7d" ${state.adminDateRange === "7d" ? "selected" : ""}>Son 7 gün</option>
+          <option value="1m" ${state.adminDateRange === "1m" ? "selected" : ""}>Son 1 ay</option>
+          <option value="3m" ${state.adminDateRange === "3m" ? "selected" : ""}>Son 3 ay</option>
+          <option value="6m" ${state.adminDateRange === "6m" ? "selected" : ""}>Son 6 ay</option>
+          <option value="1y" ${state.adminDateRange === "1y" ? "selected" : ""}>Son 1 yıl</option>
+          <option value="custom" ${state.adminDateRange === "custom" ? "selected" : ""}>Özel tarih</option>
+        </select>
+      </label>
+      <label>
+        Başlangıç
+        <input data-admin-date-start type="date" value="${state.adminCustomStart}" ${state.adminDateRange === "custom" ? "" : "disabled"} />
+      </label>
+      <label>
+        Bitiş
+        <input data-admin-date-end type="date" value="${state.adminCustomEnd}" ${state.adminDateRange === "custom" ? "" : "disabled"} />
+      </label>
+    </div>
+  `;
+}
+
 function refundableStatus(status) {
   return ["refunded", "cancelled_by_vendor", "cancelled_by_admin"].includes(status);
 }
@@ -3613,7 +3674,7 @@ function renderAdmin() {
       </div>
       <div class="dashboard-layout">
         <nav class="side-tabs">
-          ${["approvals", "vendors", "messages", "site", "admins", "payments", "commissions", "insights", "categories", "support"].map((tab) => `<button class="tab-button ${state.adminTab === tab ? "active" : ""}" data-admin-tab="${tab}">${adminTabLabel(tab)}</button>`).join("")}
+          ${["dashboard", "approvals", "vendors", "messages", "site", "admins", "payments", "commissions", "insights", "categories", "support"].map((tab) => `<button class="tab-button ${state.adminTab === tab ? "active" : ""}" data-admin-tab="${tab}">${adminTabLabel(tab)}</button>`).join("")}
         </nav>
         <div>${adminPanel()}</div>
       </div>
@@ -3622,10 +3683,11 @@ function renderAdmin() {
 }
 
 function adminTabLabel(tab) {
-  return { approvals: "Onaylar", vendors: "Firmalar", messages: "Satıcı mesajları", site: "Site ayarları", admins: "Alt adminler", payments: "Satılan etkinlikler", commissions: "Komisyonlar", insights: "İstatistik", categories: "Kategoriler", support: "Destek" }[tab];
+  return { dashboard: "Dashboard", approvals: "Onaylar", vendors: "Firmalar", messages: "Satıcı mesajları", site: "Site ayarları", admins: "Alt adminler", payments: "Satılan etkinlikler", commissions: "Komisyonlar", insights: "İstatistik", categories: "Kategoriler", support: "Destek" }[tab];
 }
 
 function adminPanel() {
+  if (state.adminTab === "dashboard") return adminDashboardPanel();
   if (state.adminTab === "approvals") {
     const pendingVendors = state.vendors.filter((vendor) => vendor.status === "pending" && (!state.supabaseReady || isUuid(vendor.id)));
     const pendingActivities = state.activities.filter((activity) => activity.status === "pending" && (!state.supabaseReady || isUuid(activity.id)));
@@ -3688,6 +3750,45 @@ function adminPanel() {
                 .join("")
             : `<div class="empty-state">Henüz destek talebi yok.</div>`
         }
+      </div>
+    </div>
+  `;
+}
+
+function adminDashboardPanel() {
+  const rangedBookings = filterBookingsByAdminDate();
+  const summary = bookingRevenueSummary(rangedBookings);
+  const todaySummary = bookingRevenueSummary(state.bookings.filter((booking) => isToday(booking.createdAt) || isToday(booking.cancelledAt)));
+  const unreadMessages = state.vendorMessages.filter((message) => message.senderRole === "vendor" && !message.readByAdmin).length;
+  const activeCourses = state.activities.filter((activity) => activity.status === "approved").length;
+  const completedCourses = state.activities.filter((activity) => activity.sessions.some((session) => new Date(session.end || session.start).getTime() < Date.now())).length;
+  const pendingApprovals = state.activities.filter((activity) => activity.status === "pending").length + state.vendors.filter((vendor) => vendor.status === "pending").length;
+  return `
+    <div class="panel">
+      <div class="panel-heading">
+        <div>
+          <h3>Admin dashboard</h3>
+          <p class="muted">Platform geneli satış, iade, komisyon ve operasyon özeti.</p>
+        </div>
+      </div>
+      ${adminDateControls()}
+      <div class="metrics-grid">
+        <div class="metric-card"><span>Toplam satış geliri</span><strong>${money(summary.gross)}</strong></div>
+        <div class="metric-card"><span>Toplam komisyon</span><strong>${money(summary.commission)}</strong></div>
+        <div class="metric-card"><span>İade tutarı</span><strong>${money(summary.refunds)}</strong></div>
+        <div class="metric-card"><span>İade edilen komisyon</span><strong>${money(summary.refundedCommission)}</strong></div>
+        <div class="metric-card"><span>Net komisyon geliri</span><strong>${money(summary.commission - summary.refundedCommission)}</strong></div>
+        <div class="metric-card"><span>Okunmamış mesaj</span><strong>${unreadMessages}</strong></div>
+        <div class="metric-card"><span>Toplam aktif kurs</span><strong>${activeCourses}</strong></div>
+        <div class="metric-card"><span>Tamamlanan kurs</span><strong>${completedCourses}</strong></div>
+        <div class="metric-card"><span>Onay bekleyen</span><strong>${pendingApprovals}</strong></div>
+      </div>
+      <h3>Bugünkü özet</h3>
+      <div class="metrics-grid">
+        <div class="metric-card"><span>Bugünkü satış adedi</span><strong>${todaySummary.salesCount}</strong></div>
+        <div class="metric-card"><span>Bugünkü satış geliri</span><strong>${money(todaySummary.gross)}</strong></div>
+        <div class="metric-card"><span>Bugünkü iade tutarı</span><strong>${money(todaySummary.refunds)}</strong></div>
+        <div class="metric-card"><span>Bugünkü net komisyon</span><strong>${money(todaySummary.commission - todaySummary.refundedCommission)}</strong></div>
       </div>
     </div>
   `;
@@ -3821,7 +3922,7 @@ function adminUsersPanel() {
 }
 
 function adminPaymentTable() {
-  const rows = state.bookings.map((booking) => {
+  const rows = filterBookingsByAdminDate().map((booking) => {
     const found = getSession(booking.sessionId);
     const activity = found?.activity;
     const vendor = activity ? getVendor(activity.vendorId) : null;
@@ -3830,6 +3931,7 @@ function adminPaymentTable() {
   return `
     <div class="panel">
       <h3>Satılan etkinlikler</h3>
+      ${adminDateControls()}
       <div class="table-wrap">
         <table>
           <thead><tr><th>Etkinlik</th><th>Firma</th><th>Satın alan</th><th>Katılımcı çocuk</th><th>Tutar</th><th>Durum</th><th>Aksiyon</th></tr></thead>
@@ -3841,9 +3943,11 @@ function adminPaymentTable() {
 }
 
 function adminCommissionTable() {
-  const summary = bookingRevenueSummary(state.bookings);
+  const bookings = filterBookingsByAdminDate();
+  const summary = bookingRevenueSummary(bookings);
   return `
     <div class="panel">
+      ${adminDateControls()}
       <div class="metrics-grid">
         <div class="metric-card"><span>Toplam ciro</span><strong>${money(summary.gross)}</strong></div>
         <div class="metric-card"><span>Toplam komisyon</span><strong>${money(summary.commission)}</strong></div>
@@ -3854,7 +3958,7 @@ function adminCommissionTable() {
       <div class="table-wrap">
         <table>
           <thead><tr><th>Booking</th><th>Oran</th><th>Komisyon</th><th>İade komisyonu</th><th>Payout</th></tr></thead>
-          <tbody>${state.bookings.map((booking) => `<tr><td>${booking.id}</td><td>%${Math.round(booking.commissionRate * 100)}</td><td>${money(paidStatus(booking.status) ? booking.commissionAmount : 0)}</td><td>${money(refundableStatus(booking.status) ? booking.commissionAmount : 0)}</td><td>pending</td></tr>`).join("") || `<tr><td colspan="5">Komisyon kaydı yok.</td></tr>`}</tbody>
+          <tbody>${bookings.map((booking) => `<tr><td>${booking.id}</td><td>%${Math.round(booking.commissionRate * 100)}</td><td>${money(paidStatus(booking.status) ? booking.commissionAmount : 0)}</td><td>${money(refundableStatus(booking.status) ? booking.commissionAmount : 0)}</td><td>pending</td></tr>`).join("") || `<tr><td colspan="5">Komisyon kaydı yok.</td></tr>`}</tbody>
         </table>
       </div>
     </div>
@@ -4627,6 +4731,23 @@ document.addEventListener("submit", async (event) => {
 });
 
 document.addEventListener("change", (event) => {
+  if (event.target.matches("[data-admin-date-range]")) {
+    state.adminDateRange = event.target.value;
+    renderAdmin();
+    return;
+  }
+  if (event.target.matches("[data-admin-date-start]")) {
+    state.adminCustomStart = event.target.value;
+    state.adminDateRange = "custom";
+    renderAdmin();
+    return;
+  }
+  if (event.target.matches("[data-admin-date-end]")) {
+    state.adminCustomEnd = event.target.value;
+    state.adminDateRange = "custom";
+    renderAdmin();
+    return;
+  }
   if (event.target.matches('input[type="file"][data-preview-target]')) previewSelectedImages(event.target);
   if (event.target.matches('#bookingForm input[name="session"], #bookingForm input[name="children"]')) {
     updateBookingEstimate(event.target.closest("form"));
