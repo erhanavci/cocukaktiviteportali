@@ -104,6 +104,7 @@ create table if not exists public.activities (
   min_age int not null check (min_age >= 0),
   max_age int not null check (max_age <= 18 and max_age >= min_age),
   activity_type text not null,
+  delivery_mode text not null default 'physical' check (delivery_mode in ('physical', 'online', 'hybrid')),
   participation_type text not null default 'group' check (participation_type in ('group', 'private')),
   district text not null,
   address text,
@@ -113,11 +114,14 @@ create table if not exists public.activities (
   status public.record_status not null default 'pending',
   cancellation_policy text not null default 'Etkinlikten 24 saat öncesine kadar ücretsiz iptal.',
   image_url text,
+  meeting_url text,
   gallery_image_urls text[] not null default '{}',
   created_at timestamptz not null default now()
 );
 
 alter table public.activities add column if not exists address text;
+alter table public.activities add column if not exists delivery_mode text not null default 'physical';
+alter table public.activities add column if not exists meeting_url text;
 alter table public.activities add column if not exists location_query text;
 alter table public.activities add column if not exists lat numeric(10, 7);
 alter table public.activities add column if not exists lng numeric(10, 7);
@@ -125,6 +129,8 @@ alter table public.activities add column if not exists image_url text;
 alter table public.activities add column if not exists gallery_image_urls text[] not null default '{}';
 alter table public.activities add column if not exists participation_type text not null default 'group';
 alter table public.activities add column if not exists vendor_note text;
+alter table public.activities drop constraint if exists activities_delivery_mode_check;
+alter table public.activities add constraint activities_delivery_mode_check check (delivery_mode in ('physical', 'online', 'hybrid'));
 alter table public.activities drop constraint if exists activities_participation_type_check;
 alter table public.activities add constraint activities_participation_type_check check (participation_type in ('group', 'private'));
 
@@ -198,6 +204,34 @@ create table if not exists public.vendor_messages (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.site_settings (
+  key text primary key,
+  value text not null,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.social_links (
+  id uuid primary key default gen_random_uuid(),
+  platform text not null,
+  url text not null,
+  is_active boolean not null default true,
+  sort_order int not null default 100,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.footer_links (
+  id uuid primary key default gen_random_uuid(),
+  link_group text not null,
+  label text not null,
+  url text not null,
+  is_active boolean not null default true,
+  sort_order int not null default 100,
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists social_links_platform_unique on public.social_links(platform);
+create unique index if not exists footer_links_group_label_unique on public.footer_links(link_group, label);
+
 create table if not exists public.favorites (
   user_id uuid not null references public.profiles(id) on delete cascade,
   activity_id uuid not null references public.activities(id) on delete cascade,
@@ -239,6 +273,32 @@ create table if not exists public.subscription_plans (
 );
 
 alter table public.bookings add column if not exists cancelled_at timestamptz;
+
+insert into public.site_settings (key, value)
+values
+  ('brandName', 'Minik Kaşifler'),
+  ('brandAccent', 'Çocuk Aktivite Portalı'),
+  ('heroTitle', 'Çocuğunuz için eğlenceli ve eğitici dünyayı keşfedin.'),
+  ('heroText', 'Sanat, bilim, spor, doğa ve online atölyeler. Yaşa, ilgi alanına ve konuma göre seçilmiş etkinlikleri tek yerden bulun.'),
+  ('aboutTitle', 'Neden Minik Kaşifler?'),
+  ('aboutText', 'Amacımız, çocukların potansiyellerini keşfetmelerine yardımcı olmak ve ebeveynlerin güvenilir, kaliteli aktivitelere kolayca ulaşmasını sağlamaktır.'),
+  ('contactEmail', 'merhaba@minikkasifler.com'),
+  ('contactPhone', '+90 (850) 123 45 67'),
+  ('contactAddress', 'İstanbul')
+on conflict (key) do nothing;
+
+insert into public.social_links (platform, url, sort_order)
+values ('Instagram', '#', 10), ('Facebook', '#', 20), ('YouTube', '#', 30)
+on conflict (platform) do nothing;
+
+insert into public.footer_links (link_group, label, url, sort_order)
+values
+  ('Keşfet', 'Tüm Etkinlikler', '#results', 10),
+  ('Keşfet', 'Online Kurslar', '#results', 20),
+  ('Kurumsal', 'Hakkımızda', '#aboutSection', 10),
+  ('Kurumsal', 'Firma Girişi', '#vendor', 20),
+  ('Yasal', 'Gizlilik Politikası', '#', 10)
+on conflict (link_group, label) do nothing;
 
 create or replace function public.sync_session_reserved_count()
 returns trigger
@@ -411,6 +471,9 @@ alter table public.payments enable row level security;
 alter table public.commissions enable row level security;
 alter table public.vendor_expenses enable row level security;
 alter table public.vendor_messages enable row level security;
+alter table public.site_settings enable row level security;
+alter table public.social_links enable row level security;
+alter table public.footer_links enable row level security;
 alter table public.favorites enable row level security;
 alter table public.activity_reviews enable row level security;
 alter table public.support_tickets enable row level security;
@@ -694,6 +757,33 @@ with check (public.is_admin() or exists (
   select 1 from public.vendor_users vu
   where vu.vendor_id = vendor_messages.vendor_id and vu.user_id = auth.uid()
 ));
+
+drop policy if exists "site settings public read" on public.site_settings;
+create policy "site settings public read" on public.site_settings
+for select using (true);
+
+drop policy if exists "site settings admin manage" on public.site_settings;
+create policy "site settings admin manage" on public.site_settings
+for all using (public.is_admin())
+with check (public.is_admin());
+
+drop policy if exists "social links public read" on public.social_links;
+create policy "social links public read" on public.social_links
+for select using (is_active or public.is_admin());
+
+drop policy if exists "social links admin manage" on public.social_links;
+create policy "social links admin manage" on public.social_links
+for all using (public.is_admin())
+with check (public.is_admin());
+
+drop policy if exists "footer links public read" on public.footer_links;
+create policy "footer links public read" on public.footer_links
+for select using (is_active or public.is_admin());
+
+drop policy if exists "footer links admin manage" on public.footer_links;
+create policy "footer links admin manage" on public.footer_links
+for all using (public.is_admin())
+with check (public.is_admin());
 
 drop policy if exists "plans readable" on public.subscription_plans;
 create policy "plans readable" on public.subscription_plans

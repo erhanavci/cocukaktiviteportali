@@ -4,20 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <base href="/" />
-    <title>Çocuk Aktivite Portalı MVP</title>
+    <title>Minik Kaşifler - Çocuk Aktivite Portalı</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <header class="topbar">
       <a class="brand" href="#home" data-route="home" aria-label="Ana sayfa">
-        <span class="brand-mark">ÇA</span>
+        <span class="brand-mark">MK</span>
         <span>
-          <strong>Çocuk Aktivite Portalı</strong>
-          <small>İstanbul MVP</small>
+          <strong>Minik Kaşifler</strong>
+          <small>Çocuk Aktivite Portalı</small>
         </span>
       </a>
       <nav class="primary-nav" aria-label="Ana navigasyon">
         <button class="nav-link active" data-route="home">Keşfet</button>
+        <button class="nav-link public-only" data-scroll="categoryShowcase">Kategoriler</button>
+        <button class="nav-link public-only" data-scroll="aboutSection">Hakkımızda</button>
         <button class="nav-link" data-route="bookings">Rezervasyonlarım</button>
         <button class="nav-link" data-route="vendor">Satıcı Paneli</button>
         <button class="nav-link" data-route="support">Destek</button>
@@ -33,16 +35,39 @@
     <aside class="toast" id="toast" aria-live="polite"></aside>
 
     <template id="homeTemplate">
-      <section class="hero">
-        <img src="assets/hero-workshop.png" alt="Çocukların atölye etkinliği yaptığı sıcak bir ortam" />
-        <div class="hero-overlay">
-          <p class="eyebrow">Çocuk etkinlikleri için güvenilir keşif</p>
-          <h1>Çocuğunuz için güvenilir etkinliği bulun, seansı seçin, yerinizi ayırın.</h1>
-          <p class="hero-copy">
-            İstanbul odaklı ilk MVP: oyun grubu, sanat atölyesi, müze/gezi ve STEM etkinlikleri.
-          </p>
-          <div class="hero-actions">
-            <button class="primary-action" data-scroll="results">Etkinlik ara</button>
+      <section class="hero discovery-hero">
+        <div class="hero-content-grid">
+          <div class="hero-copy-block">
+            <p class="pill-label">Çocuklar için güvenilir aktiviteler</p>
+            <h1>Çocuğunuz için eğlenceli ve eğitici dünyayı keşfedin.</h1>
+            <p class="hero-copy">
+              Sanat, bilim, spor, doğa ve online atölyeler. Yaşa, ilgi alanına ve konuma göre seçilmiş etkinlikleri tek yerden bulun.
+            </p>
+            <form class="hero-search" id="heroSearch">
+              <label>
+                <span>Aktivite ara</span>
+                <input name="query" type="search" placeholder="Robotik, resim, müze..." />
+              </label>
+              <label>
+                <span>Konum</span>
+                <select name="location">
+                  <option value="Tümü">Tüm Konumlar</option>
+                  <option value="Online">Online</option>
+                </select>
+              </label>
+              <button class="primary-action" type="submit">Ara</button>
+            </form>
+            <div class="popular-searches">
+              <span>Popüler:</span>
+              <button data-search-tag="Bilim/STEM">Robotik</button>
+              <button data-search-tag="Spor">Yüzme</button>
+              <button data-search-tag="Sanat atölyesi">Resim</button>
+            </div>
+          </div>
+          <div class="hero-visual-card" aria-hidden="true">
+            <img src="assets/hero-workshop.png" alt="" />
+            <div class="floating-badge top"><strong>Sanat</strong><span>Atölyeler</span></div>
+            <div class="floating-badge bottom"><strong>Online</strong><span>Canlı ders</span></div>
           </div>
         </div>
       </section>
@@ -52,6 +77,17 @@
         <article><strong data-stat="sessionCount">0</strong><span>aktif seans</span></article>
         <article><strong>7/24</strong><span>destek ve onay akışı</span></article>
         <article><strong>24s</strong><span>varsayılan ücretsiz iptal</span></article>
+      </section>
+
+      <section class="category-showcase" id="categoryShowcase">
+        <div class="section-heading centered-heading">
+          <div>
+            <p class="eyebrow">Kategoriler</p>
+            <h2>Neler keşfetmek istersiniz?</h2>
+            <p class="muted">Çocuğunuzun ilgi alanlarına uygun etkinlikleri hızlıca filtreleyin.</p>
+          </div>
+        </div>
+        <div class="category-grid" id="categoryGrid"></div>
       </section>
 
       <section class="section-shell" id="results">
@@ -91,6 +127,36 @@
         </form>
         <div class="activity-grid" id="activityGrid"></div>
       </section>
+
+      <section class="about-band" id="aboutSection">
+        <div class="about-media">
+          <img src="assets/hero-workshop.png" alt="Çocuk etkinliklerinden kareler" />
+          <div class="about-counter"><strong>10k+</strong><span>mutlu çocuk</span></div>
+        </div>
+        <div class="about-content">
+          <p class="eyebrow">Hakkımızda</p>
+          <h2>Neden Minik Kaşifler?</h2>
+          <p>Amacımız, çocukların potansiyellerini keşfetmelerine yardımcı olmak ve ebeveynlerin güvenilir, kaliteli aktivitelere kolayca ulaşmasını sağlamaktır.</p>
+          <div class="about-points">
+            <article><strong>Güvenilir kurumlar</strong><span>Firmalar ve etkinlikler admin onayından geçer.</span></article>
+            <article><strong>Yaşa uygun içerik</strong><span>Filtreler, seanslar ve çocuk profilleri birlikte çalışır.</span></article>
+            <article><strong>Kolay rezervasyon</strong><span>Seansı seçin, çocuğu belirleyin, yerinizi ayırın.</span></article>
+          </div>
+        </div>
+      </section>
+
+      <section class="newsletter-band">
+        <div>
+          <h2>Yeni etkinlikleri kaçırmayın</h2>
+          <p>Haftalık öneriler ve öne çıkan çocuk aktiviteleri için bültene katılın.</p>
+        </div>
+        <form id="newsletterForm">
+          <input name="email" type="email" required placeholder="E-posta adresiniz" />
+          <button class="primary-action" type="submit">Kayıt ol</button>
+        </form>
+      </section>
+
+      <footer class="site-footer" id="siteFooter"></footer>
     </template>
   </body>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>

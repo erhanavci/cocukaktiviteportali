@@ -25,6 +25,31 @@ const state = {
   vendorExpenses: [],
   vendorMessages: [],
   selectedMessageVendorId: null,
+  siteSettings: {
+    brandName: "Minik Kaşifler",
+    brandAccent: "Çocuk Aktivite Portalı",
+    heroTitle: "Çocuğunuz için eğlenceli ve eğitici dünyayı keşfedin.",
+    heroText: "Sanat, bilim, spor, doğa ve online atölyeler. Yaşa, ilgi alanına ve konuma göre seçilmiş etkinlikleri tek yerden bulun.",
+    aboutTitle: "Neden Minik Kaşifler?",
+    aboutText: "Amacımız, çocukların potansiyellerini keşfetmelerine yardımcı olmak ve ebeveynlerin güvenilir, kaliteli aktivitelere kolayca ulaşmasını sağlamaktır.",
+    contactEmail: "merhaba@minikkasifler.com",
+    contactPhone: "+90 (850) 123 45 67",
+    contactAddress: "İstanbul",
+  },
+  socialLinks: [
+    { id: "social-instagram", platform: "Instagram", url: "#", isActive: true },
+    { id: "social-facebook", platform: "Facebook", url: "#", isActive: true },
+    { id: "social-youtube", platform: "YouTube", url: "#", isActive: true },
+  ],
+  footerLinks: [
+    { id: "footer-all", group: "Keşfet", label: "Tüm Etkinlikler", url: "#results", isActive: true },
+    { id: "footer-online", group: "Keşfet", label: "Online Kurslar", url: "#results", isActive: true },
+    { id: "footer-about", group: "Kurumsal", label: "Hakkımızda", url: "#aboutSection", isActive: true },
+    { id: "footer-vendor", group: "Kurumsal", label: "Firma Girişi", url: "#vendor", isActive: true },
+    { id: "footer-privacy", group: "Yasal", label: "Gizlilik Politikası", url: "#", isActive: true },
+  ],
+  editingSocialId: null,
+  editingFooterLinkId: null,
   categories: ["Oyun grubu", "Sanat atölyesi", "Spor", "Müzik", "Dans", "Drama", "Müze/gezi", "Bilim/STEM", "Doğa", "Ebeveyn-çocuk", "Tatil kampı", "Düzenli kurs"],
   authMode: "choice",
   signupRole: "parent",
@@ -86,6 +111,8 @@ const state = {
       title: "Renkli Seramik Atölyesi",
       category: "Sanat atölyesi",
       type: "Tek seans",
+      deliveryMode: "physical",
+      meetingUrl: "",
       participationType: "group",
       minAge: 5,
       maxAge: 9,
@@ -115,6 +142,8 @@ const state = {
       title: "Mini Robotik ve STEM Keşfi",
       category: "Bilim/STEM",
       type: "Haftalık tekrar eden kurs",
+      deliveryMode: "hybrid",
+      meetingUrl: "https://meet.google.com/demo-robotik",
       participationType: "group",
       minAge: 7,
       maxAge: 12,
@@ -144,6 +173,8 @@ const state = {
       title: "Ebeveynli Oyun Grubu",
       category: "Oyun grubu",
       type: "Tek seans",
+      deliveryMode: "physical",
+      meetingUrl: "",
       participationType: "group",
       minAge: 1,
       maxAge: 3,
@@ -172,6 +203,8 @@ const state = {
       title: "Pera Müzesi Çocuk Turu",
       category: "Müze/gezi",
       type: "Fiziksel",
+      deliveryMode: "physical",
+      meetingUrl: "",
       participationType: "group",
       minAge: 6,
       maxAge: 10,
@@ -555,6 +588,8 @@ function visualForIndex(index) {
 async function loadMarketplaceData() {
   if (!state.supabaseReady) return;
 
+  await loadSiteSettings();
+
   const { data: vendors } = await state.supabaseClient
     .from("vendors")
     .select("*")
@@ -590,6 +625,8 @@ async function loadMarketplaceData() {
       title: activity.title,
       category: activity.category?.name ?? "Etkinlik",
       type: activity.activity_type,
+      deliveryMode: activity.delivery_mode ?? "physical",
+      meetingUrl: activity.meeting_url ?? "",
       participationType: activity.participation_type ?? "group",
       minAge: activity.min_age,
       maxAge: activity.max_age,
@@ -632,6 +669,39 @@ async function loadCategoryData() {
   if (!state.supabaseReady) return;
   const { data, error } = await state.supabaseClient.from("categories").select("name").order("name", { ascending: true });
   if (!error && data?.length) state.categories = data.map((category) => category.name);
+}
+
+async function loadSiteSettings() {
+  if (!state.supabaseReady) return;
+  const [settingsResult, socialsResult, footerResult] = await Promise.all([
+    state.supabaseClient.from("site_settings").select("key,value"),
+    state.supabaseClient.from("social_links").select("*").order("sort_order", { ascending: true }),
+    state.supabaseClient.from("footer_links").select("*").order("sort_order", { ascending: true }),
+  ]);
+  if (!settingsResult.error && settingsResult.data?.length) {
+    const next = { ...state.siteSettings };
+    settingsResult.data.forEach((item) => {
+      if (item.key in next) next[item.key] = item.value;
+    });
+    state.siteSettings = next;
+  }
+  if (!socialsResult.error && socialsResult.data) {
+    state.socialLinks = socialsResult.data.map((item) => ({
+      id: item.id,
+      platform: item.platform,
+      url: item.url,
+      isActive: item.is_active,
+    }));
+  }
+  if (!footerResult.error && footerResult.data) {
+    state.footerLinks = footerResult.data.map((item) => ({
+      id: item.id,
+      group: item.link_group,
+      label: item.label,
+      url: item.url,
+      isActive: item.is_active,
+    }));
+  }
 }
 
 async function loadReviewData() {
@@ -848,6 +918,23 @@ function mapEmbedUrl(activity) {
 function googleMapsSearchUrl(activity) {
   const query = encodeURIComponent(activity.locationQuery || activity.address || `${activity.title} ${activity.district} İstanbul`);
   return `https://www.google.com/maps/search/?api=1&query=${query}`;
+}
+
+function deliveryLabel(mode) {
+  return { physical: "Fiziksel", online: "Online", hybrid: "Hibrit" }[mode] || "Fiziksel";
+}
+
+function isOnlineActivity(activity) {
+  return ["online", "hybrid"].includes(activity.deliveryMode);
+}
+
+function demoMeetUrl(activityTitle) {
+  return `https://meet.google.com/demo-${slugify(activityTitle || "etkinlik").slice(0, 24) || "etkinlik"}`;
+}
+
+function activityMeetingUrl(activity) {
+  if (!isOnlineActivity(activity)) return "";
+  return activity.meetingUrl || demoMeetUrl(activity.title);
 }
 
 function remainingLabel(activity) {
@@ -1099,6 +1186,10 @@ function updateNav() {
   const vendorButton = document.querySelector('[data-route="vendor"]');
   const supportButton = document.querySelector('[data-route="support"]');
   const pricingButton = document.querySelector('[data-route="pricing"]');
+  const brandStrong = document.querySelector(".brand strong");
+  const brandSmall = document.querySelector(".brand small");
+  if (brandStrong) brandStrong.textContent = state.siteSettings.brandName;
+  if (brandSmall) brandSmall.textContent = state.siteSettings.brandAccent;
   if (bookingsButton) bookingsButton.hidden = !isParent();
   if (vendorButton) vendorButton.hidden = !isVendor();
   if (supportButton) supportButton.hidden = isAdmin();
@@ -1218,10 +1309,90 @@ function render() {
 function renderHome() {
   app.innerHTML = document.querySelector("#homeTemplate").innerHTML;
   const activities = publishedActivities();
+  app.querySelector(".brand strong")?.replaceChildren(document.createTextNode(state.siteSettings.brandName));
+  const heroTitle = app.querySelector(".hero-copy-block h1");
+  const heroText = app.querySelector(".hero-copy");
+  const aboutTitle = app.querySelector(".about-content h2");
+  const aboutText = app.querySelector(".about-content > p:not(.eyebrow)");
+  if (heroTitle) heroTitle.textContent = state.siteSettings.heroTitle;
+  if (heroText) heroText.textContent = state.siteSettings.heroText;
+  if (aboutTitle) aboutTitle.textContent = state.siteSettings.aboutTitle;
+  if (aboutText) aboutText.textContent = state.siteSettings.aboutText;
   app.querySelector('[data-stat="activityCount"]').textContent = activities.length;
   app.querySelector('[data-stat="sessionCount"]').textContent = activities.reduce((sum, activity) => sum + activity.sessions.length, 0);
+  renderCategoryShowcase();
+  renderSiteFooter();
   setupFilters();
   renderActivityGrid(activities);
+  setupHeroSearch();
+}
+
+function renderCategoryShowcase() {
+  const grid = app.querySelector("#categoryGrid");
+  if (!grid) return;
+  const palette = ["blue", "green", "orange", "purple", "red", "yellow"];
+  grid.innerHTML = state.categories
+    .slice(0, 12)
+    .map((category, index) => `<button class="category-tile ${palette[index % palette.length]}" data-category-filter="${category}"><span>${categoryIcon(category)}</span><strong>${category}</strong></button>`)
+    .join("");
+}
+
+function categoryIcon(category) {
+  const text = category.toLocaleLowerCase("tr-TR");
+  if (text.includes("sanat")) return "🎨";
+  if (text.includes("bilim") || text.includes("stem") || text.includes("kod")) return "⚙";
+  if (text.includes("spor")) return "●";
+  if (text.includes("müzik") || text.includes("dans")) return "♪";
+  if (text.includes("doğa")) return "⌂";
+  if (text.includes("müze")) return "◆";
+  return "✦";
+}
+
+function renderSiteFooter() {
+  const footer = app.querySelector("#siteFooter");
+  if (!footer) return;
+  const groups = [...new Set(state.footerLinks.filter((link) => link.isActive).map((link) => link.group))];
+  footer.innerHTML = `
+    <div class="footer-grid">
+      <section>
+        <div class="footer-brand"><span class="brand-mark">MK</span><strong>${state.siteSettings.brandName}</strong></div>
+        <p>${state.siteSettings.brandAccent}. Çocukların eğlenerek öğrendiği, ebeveynlerin güvenle tercih ettiği aktivite rehberi.</p>
+        <div class="social-row">
+          ${state.socialLinks.filter((link) => link.isActive).map((link) => `<a href="${link.url}" target="_blank" rel="noreferrer">${link.platform.slice(0, 2).toUpperCase()}</a>`).join("")}
+        </div>
+      </section>
+      ${groups
+        .map(
+          (group) => `
+            <section>
+              <h3>${group}</h3>
+              <ul>${state.footerLinks.filter((link) => link.isActive && link.group === group).map((link) => `<li><a href="${link.url}">${link.label}</a></li>`).join("")}</ul>
+            </section>
+          `,
+        )
+        .join("")}
+      <section>
+        <h3>İletişim</h3>
+        <p>${state.siteSettings.contactAddress}</p>
+        <p>${state.siteSettings.contactPhone}</p>
+        <p>${state.siteSettings.contactEmail}</p>
+      </section>
+    </div>
+    <div class="footer-bottom"><span>© 2026 ${state.siteSettings.brandName}. Tüm hakları saklıdır.</span></div>
+  `;
+}
+
+function setupHeroSearch() {
+  const heroForm = app.querySelector("#heroSearch");
+  const filters = app.querySelector("#filters");
+  if (!heroForm || !filters) return;
+  heroForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    filters.elements.query.value = heroForm.elements.query.value;
+    if (heroForm.elements.location.value === "Online") filters.elements.type.value = "Online";
+    app.querySelector("#results")?.scrollIntoView({ behavior: "smooth" });
+    renderActivityGrid(filterActivities(new FormData(filters)));
+  });
 }
 
 function renderAuth() {
@@ -1453,7 +1624,7 @@ function setupFilters() {
     category: ["Tümü", ...new Set(state.activities.map((activity) => activity.category))],
     age: ["Tümü", "0-2", "3-4", "5-6", "7-9", "10-12"],
     district: ["Tümü", ...new Set(state.activities.map((activity) => activity.district))],
-    type: ["Tümü", ...new Set(state.activities.map((activity) => activity.type))],
+    type: ["Tümü", "Fiziksel", "Online", "Hibrit", ...new Set(state.activities.map((activity) => activity.type))],
   };
 
   Object.entries(lists).forEach(([name, values]) => {
@@ -1498,7 +1669,7 @@ function filterActivities(formData) {
       inQuery &&
       (category === "Tümü" || activity.category === category) &&
       (district === "Tümü" || activity.district === district) &&
-      (type === "Tümü" || activity.type === type) &&
+      (type === "Tümü" || activity.type === type || deliveryLabel(activity.deliveryMode) === type) &&
       inAge &&
       activity.price <= maxPrice
     );
@@ -1516,29 +1687,31 @@ function renderActivityGrid(activities) {
     .map((activity) => {
       const vendor = getVendor(activity.vendorId) || { id: activity.vendorId, name: "Firma" };
       const summary = ratingSummary(activity.id);
+      const duration = activity.sessions?.[0] ? durationMinutes(activity.sessions[0].start, activity.sessions[0].end) : 120;
       return `
         <article class="activity-card">
           <div class="activity-visual" style="${activity.imageUrl ? `--image:url('${activity.imageUrl}')` : `--visual:${activity.visual}`}">
-            <strong>${activity.category}</strong>
+            <strong>${isOnlineActivity(activity) ? "Online Katılım" : activity.category}</strong>
+            ${isParent() ? `<button class="card-heart ${state.favorites.has(activity.id) ? "active" : ""}" data-favorite="${activity.id}" title="Favori">♥</button>` : ""}
           </div>
           <div class="activity-body">
-            <div class="tag-row">
-              <span class="tag">${activity.minAge}-${activity.maxAge} yaş</span>
-              <span class="tag">${activity.district}</span>
-              ${activity.address ? `<span class="tag">Konumlu</span>` : ""}
-              <span class="tag">${activity.participationType === "private" ? "Bire bir" : "Toplu"}</span>
-              <span class="tag">${remainingLabel(activity)}</span>
+            <div class="card-meta-line">
+              <span class="category-chip">${activity.category}</span>
+              <span class="stars">${summary.count ? starText(summary.average) : "☆☆☆☆☆"} ${summary.count ? `<small>(${summary.count})</small>` : ""}</span>
             </div>
             <h3>${activity.title}</h3>
             <p class="muted">Düzenleyen <button class="text-link" data-vendor-detail="${vendor.id}">${vendor.name}</button> · ${activity.type}</p>
-            <div class="review-summary">
-              <span class="stars">${summary.count ? starText(summary.average) : "☆☆☆☆☆"}</span>
-              <span>${summary.count ? `${summary.average.toFixed(1)} / 5 · ${summary.count} yorum` : "Henüz yorum yok"}</span>
+            <p class="card-description">${activity.description}</p>
+            <div class="activity-facts">
+              <span>${duration >= 60 ? `${Math.round(duration / 60)} saat` : `${duration} dk`}</span>
+              <span>${activity.minAge}-${activity.maxAge} yaş</span>
+              <span>${deliveryLabel(activity.deliveryMode)}</span>
+              <span>${remainingLabel(activity)}</span>
             </div>
             <div class="card-footer">
+              <span class="location-label">${isOnlineActivity(activity) ? "Google Meet" : activity.district}</span>
               <span class="price">${money(activity.price)}</span>
               <div class="button-row">
-                ${isParent() ? `<button class="icon-button ${state.favorites.has(activity.id) ? "active" : ""}" data-favorite="${activity.id}" title="Favori">♥</button>` : ""}
                 <button class="primary-action" data-detail="${activity.id}">Detay</button>
               </div>
             </div>
@@ -1666,6 +1839,7 @@ function renderDetail() {
           <p>${activity.description}</p>
           <div class="tag-row">
             <span class="tag">${activity.type}</span>
+            <span class="tag">${deliveryLabel(activity.deliveryMode)}</span>
             <span class="tag">${activity.participationType === "private" ? "Bire bir etkinlik" : "Toplu etkinlik"}</span>
             ${activity.vendorNote ? `<span class="tag">Satıcı notu var</span>` : ""}
             <span class="tag">${favoriteCount(activity.id)} favori</span>
@@ -1675,11 +1849,19 @@ function renderDetail() {
             <span class="tag">${activity.cancellation}</span>
           </div>
           ${activity.vendorNote ? `<div class="support-reply"><strong>Satıcı notu</strong><p>${activity.vendorNote}</p></div>` : ""}
+          ${
+            isOnlineActivity(activity) && userCanReview(activity.id)
+              ? `<div class="support-reply"><strong>Online katılım</strong><p>Rezervasyonunuz olduğu için Google Meet bağlantısı açıldı.</p><a class="ghost-action map-link" href="${activityMeetingUrl(activity)}" target="_blank" rel="noreferrer">Google Meet'e katıl</a></div>`
+              : isOnlineActivity(activity)
+                ? `<div class="support-reply"><strong>Online etkinlik</strong><p>Google Meet bağlantısı rezervasyon sonrası görüntülenir.</p></div>`
+                : ""
+          }
           <h3>Konum</h3>
-          <div class="map-frame">
-            <iframe title="${activity.title} konumu" src="${mapEmbedUrl(activity)}" loading="lazy"></iframe>
-          </div>
-          <a class="ghost-action map-link" href="${googleMapsSearchUrl(activity)}" target="_blank" rel="noreferrer">Google Maps'te aç</a>
+          ${
+            activity.deliveryMode === "online"
+              ? `<div class="empty-state">Bu etkinlik online yapılır.</div>`
+              : `<div class="map-frame"><iframe title="${activity.title} konumu" src="${mapEmbedUrl(activity)}" loading="lazy"></iframe></div><a class="ghost-action map-link" href="${googleMapsSearchUrl(activity)}" target="_blank" rel="noreferrer">Google Maps'te aç</a>`
+          }
           ${
             activity.galleryImages?.length
               ? `
@@ -1987,6 +2169,7 @@ function bookingCard(booking) {
   const childNames = booking.childNames?.length
     ? booking.childNames
     : childIds.map((id) => state.children.find((item) => item.id === id)?.name).filter(Boolean);
+  const onlineLink = isOnlineActivity(activity) && ["confirmed", "pending_payment"].includes(booking.status) ? activityMeetingUrl(activity) : "";
   return `
     <article class="booking-card">
       <div class="panel-heading">
@@ -2000,6 +2183,7 @@ function bookingCard(booking) {
         <span class="tag">Ödeme: ${booking.paymentProvider}</span>
         <span class="tag">Katılımcı: ${childIds.length || 1}</span>
         <span class="tag">Tutar: ${money(booking.totalAmount)}</span>
+        ${onlineLink ? `<a class="tag link-tag" href="${onlineLink}" target="_blank" rel="noreferrer">Google Meet</a>` : ""}
       </div>
       ${canCancelBooking(booking) ? `<button class="ghost-action danger-action" data-cancel-booking="${booking.id}">Rezervasyonu iptal et</button>` : ""}
     </article>
@@ -2439,12 +2623,14 @@ function newActivityForm(vendor) {
         <input type="hidden" name="currentGalleryImages" value="${(editingActivity?.galleryImages ?? []).join("|")}" />
         <label><span>Başlık</span><input name="title" required placeholder="Yaratıcı drama atölyesi" value="${editingActivity?.title ?? ""}" /></label>
         <label><span>Kategori</span><select name="category">${state.categories.map((item) => `<option ${editingActivity?.category === item ? "selected" : ""}>${item}</option>`).join("")}</select></label>
+        <label><span>Katılım şekli</span><select name="deliveryMode"><option value="physical" ${editingActivity?.deliveryMode !== "online" && editingActivity?.deliveryMode !== "hybrid" ? "selected" : ""}>Fiziksel</option><option value="online" ${editingActivity?.deliveryMode === "online" ? "selected" : ""}>Online - Google Meet</option><option value="hybrid" ${editingActivity?.deliveryMode === "hybrid" ? "selected" : ""}>Hibrit</option></select></label>
         <label><span>Katılım tipi</span><select name="participationType"><option value="group" ${editingActivity?.participationType !== "private" ? "selected" : ""}>Toplu etkinlik</option><option value="private" ${editingActivity?.participationType === "private" ? "selected" : ""}>Bire bir etkinlik</option></select></label>
         <label><span>Min yaş</span><input name="minAge" type="number" min="0" max="12" value="${editingActivity?.minAge ?? 5}" /></label>
         <label><span>Max yaş</span><input name="maxAge" type="number" min="0" max="12" value="${editingActivity?.maxAge ?? 8}" /></label>
         <label><span>İlçe</span><input name="district" value="${editingActivity?.district ?? vendor.district}" /></label>
-        <label><span>Mekan / işletme adı</span><input name="locationQuery" required value="${editingActivity?.locationQuery ?? editingActivity?.address ?? ""}" placeholder="Örn. Pera Müzesi, Beyoğlu" /></label>
+        <label><span>Mekan / işletme adı</span><input name="locationQuery" value="${editingActivity?.locationQuery ?? editingActivity?.address ?? ""}" placeholder="Online etkinlikte boş kalabilir" /></label>
         <label class="wide"><span>Adres notu</span><input name="address" value="${editingActivity?.address ?? ""}" placeholder="Kat, salon, buluşma noktası gibi ek bilgi" /></label>
+        <label class="wide"><span>Google Meet linki (demo)</span><input name="meetingUrl" value="${editingActivity?.meetingUrl ?? ""}" placeholder="Boş kalırsa demo link otomatik üretilir" /></label>
         <fieldset class="wide option-group" id="activitySessions">
           <legend>Seanslar</legend>
           ${sessions.map((session, index) => sessionEditorRow(session, index)).join("")}
@@ -2523,7 +2709,11 @@ async function createActivity(form) {
     galleryImages = [...galleryImages, ...localGallery];
   }
   const participationType = String(data.get("participationType") || "group");
-  const locationQuery = String(data.get("locationQuery") || "").trim();
+  const deliveryMode = String(data.get("deliveryMode") || "physical");
+  const rawMeetingUrl = String(data.get("meetingUrl") || "").trim();
+  const title = String(data.get("title") || "").trim();
+  const meetingUrl = ["online", "hybrid"].includes(deliveryMode) ? rawMeetingUrl || demoMeetUrl(title) : "";
+  const locationQuery = String(data.get("locationQuery") || "").trim() || (deliveryMode === "online" ? "Online" : "");
   const sessionIds = data.getAll("sessionId").map(String);
   const sessionDates = data.getAll("sessionDate").map(String);
   const sessionStarts = data.getAll("sessionStartTime").map(String);
@@ -2548,9 +2738,11 @@ async function createActivity(form) {
   const activity = {
     id: activityId || `act-${Date.now()}`,
     vendorId: existingActivity?.vendorId ?? "ven-1",
-    title: data.get("title"),
+    title,
     category: data.get("category"),
-    type: sessions.length > 1 ? "Çoklu seans" : "Tek seans",
+    type: deliveryMode === "online" ? "Online etkinlik" : sessions.length > 1 ? "Çoklu seans" : "Tek seans",
+    deliveryMode,
+    meetingUrl,
     participationType,
     minAge: Number(data.get("minAge")),
     maxAge: Number(data.get("maxAge")),
@@ -2626,7 +2818,9 @@ async function createActivity(form) {
         vendor_note: String(data.get("vendorNote") || "").trim(),
         min_age: Number(data.get("minAge")),
         max_age: Number(data.get("maxAge")),
-        activity_type: sessions.length > 1 ? "Çoklu seans" : "Tek seans",
+        activity_type: deliveryMode === "online" ? "Online etkinlik" : sessions.length > 1 ? "Çoklu seans" : "Tek seans",
+        delivery_mode: deliveryMode,
+        meeting_url: meetingUrl,
         participation_type: participationType,
         district: data.get("district"),
         address: data.get("address"),
@@ -2977,7 +3171,7 @@ function renderAdmin() {
       </div>
       <div class="dashboard-layout">
         <nav class="side-tabs">
-          ${["approvals", "vendors", "messages", "admins", "payments", "commissions", "categories", "support"].map((tab) => `<button class="tab-button ${state.adminTab === tab ? "active" : ""}" data-admin-tab="${tab}">${adminTabLabel(tab)}</button>`).join("")}
+          ${["approvals", "vendors", "messages", "site", "admins", "payments", "commissions", "categories", "support"].map((tab) => `<button class="tab-button ${state.adminTab === tab ? "active" : ""}" data-admin-tab="${tab}">${adminTabLabel(tab)}</button>`).join("")}
         </nav>
         <div>${adminPanel()}</div>
       </div>
@@ -2986,7 +3180,7 @@ function renderAdmin() {
 }
 
 function adminTabLabel(tab) {
-  return { approvals: "Onaylar", vendors: "Firmalar", messages: "Satıcı mesajları", admins: "Alt adminler", payments: "Satılan etkinlikler", commissions: "Komisyonlar", categories: "Kategoriler", support: "Destek" }[tab];
+  return { approvals: "Onaylar", vendors: "Firmalar", messages: "Satıcı mesajları", site: "Site ayarları", admins: "Alt adminler", payments: "Satılan etkinlikler", commissions: "Komisyonlar", categories: "Kategoriler", support: "Destek" }[tab];
 }
 
 function adminPanel() {
@@ -3004,6 +3198,7 @@ function adminPanel() {
   }
   if (state.adminTab === "vendors") return adminVendorsPanel();
   if (state.adminTab === "messages") return adminMessagesPanel();
+  if (state.adminTab === "site") return adminSitePanel();
   if (state.adminTab === "admins") return adminUsersPanel();
   if (state.adminTab === "payments") return adminPaymentTable();
   if (state.adminTab === "commissions") return adminCommissionTable();
@@ -3078,6 +3273,51 @@ function adminVendorsPanel() {
             : `<div class="empty-state">Firma kaydı yok.</div>`
         }
       </div>
+    </div>
+  `;
+}
+
+function adminSitePanel() {
+  const editingSocial = state.socialLinks.find((link) => link.id === state.editingSocialId);
+  const editingFooter = state.footerLinks.find((link) => link.id === state.editingFooterLinkId);
+  return `
+    <div class="detail-layout">
+      <article class="panel">
+        <h3>Site metinleri</h3>
+        <form id="siteSettingsForm" class="form-grid">
+          <label><span>Marka adı</span><input name="brandName" value="${state.siteSettings.brandName}" /></label>
+          <label><span>Alt marka</span><input name="brandAccent" value="${state.siteSettings.brandAccent}" /></label>
+          <label class="wide"><span>Hero başlık</span><input name="heroTitle" value="${state.siteSettings.heroTitle}" /></label>
+          <label class="wide"><span>Hero metni</span><textarea name="heroText">${state.siteSettings.heroText}</textarea></label>
+          <label class="wide"><span>Hakkımızda başlığı</span><input name="aboutTitle" value="${state.siteSettings.aboutTitle}" /></label>
+          <label class="wide"><span>Hakkımızda metni</span><textarea name="aboutText">${state.siteSettings.aboutText}</textarea></label>
+          <label><span>E-posta</span><input name="contactEmail" value="${state.siteSettings.contactEmail}" /></label>
+          <label><span>Telefon</span><input name="contactPhone" value="${state.siteSettings.contactPhone}" /></label>
+          <label class="wide"><span>Adres</span><input name="contactAddress" value="${state.siteSettings.contactAddress}" /></label>
+          <button class="primary-action wide" type="submit">Site metinlerini kaydet</button>
+        </form>
+      </article>
+      <aside class="panel">
+        <h3>Sosyal medya</h3>
+        <form id="socialLinkForm" class="form-grid">
+          <input type="hidden" name="socialId" value="${editingSocial?.id ?? ""}" />
+          <label><span>Platform</span><input name="platform" required value="${editingSocial?.platform ?? ""}" placeholder="Instagram" /></label>
+          <label><span>URL</span><input name="url" required value="${editingSocial?.url ?? ""}" placeholder="https://..." /></label>
+          <button class="ghost-action wide" type="submit">${editingSocial ? "Sosyal linki güncelle" : "Sosyal link ekle"}</button>
+        </form>
+        <div class="sessions">${state.socialLinks.map((link) => `<div class="mini-card child-card"><div><strong>${link.platform}</strong><p class="muted">${link.url}</p></div><div class="button-row"><button class="ghost-action" data-edit-social="${link.id}">Düzenle</button><button class="ghost-action danger-action" data-delete-social="${link.id}">Sil</button></div></div>`).join("")}</div>
+      </aside>
+      <article class="panel wide">
+        <h3>Footer linkleri</h3>
+        <form id="footerLinkForm" class="form-grid">
+          <input type="hidden" name="footerLinkId" value="${editingFooter?.id ?? ""}" />
+          <label><span>Başlık grubu</span><input name="group" required value="${editingFooter?.group ?? ""}" placeholder="Keşfet" /></label>
+          <label><span>Link metni</span><input name="label" required value="${editingFooter?.label ?? ""}" placeholder="Online Kurslar" /></label>
+          <label class="wide"><span>URL / bölüm</span><input name="url" required value="${editingFooter?.url ?? ""}" placeholder="#results" /></label>
+          <button class="ghost-action wide" type="submit">${editingFooter ? "Footer linkini güncelle" : "Footer link ekle"}</button>
+        </form>
+        <div class="sessions">${state.footerLinks.map((link) => `<div class="mini-card child-card"><div><strong>${link.group} · ${link.label}</strong><p class="muted">${link.url}</p></div><div class="button-row"><button class="ghost-action" data-edit-footer-link="${link.id}">Düzenle</button><button class="ghost-action danger-action" data-delete-footer-link="${link.id}">Sil</button></div></div>`).join("")}</div>
+      </article>
     </div>
   `;
 }
@@ -3213,6 +3453,82 @@ async function addAdminUser(form) {
     await state.supabaseClient.from("profiles").update({ role: "admin", status: "active" }).eq("email", email);
   }
   notify(`${email} admin olarak yetkilendirildi.`);
+  renderAdmin();
+}
+
+async function saveSiteSettings(form) {
+  const data = new FormData(form);
+  Object.keys(state.siteSettings).forEach((key) => {
+    state.siteSettings[key] = String(data.get(key) || "").trim();
+  });
+  if (state.supabaseReady) {
+    const rows = Object.entries(state.siteSettings).map(([key, value]) => ({ key, value }));
+    const { error } = await state.supabaseClient.from("site_settings").upsert(rows, { onConflict: "key" });
+    if (error) notify(`Site ayarları yerelde kaydedildi; Supabase hatası: ${error.message}`);
+  }
+  notify("Site ayarları kaydedildi.");
+  renderAdmin();
+}
+
+async function saveSocialLink(form) {
+  const data = new FormData(form);
+  const id = String(data.get("socialId") || "") || `social-${Date.now()}`;
+  const link = { id, platform: String(data.get("platform") || "").trim(), url: String(data.get("url") || "").trim(), isActive: true };
+  if (!link.platform || !link.url) return;
+  state.socialLinks = state.socialLinks.some((item) => item.id === id) ? state.socialLinks.map((item) => (item.id === id ? link : item)) : [...state.socialLinks, link];
+  state.editingSocialId = null;
+  if (state.supabaseReady) {
+    const payload = { platform: link.platform, url: link.url, is_active: true };
+    const request = isUuid(id)
+      ? state.supabaseClient.from("social_links").update(payload).eq("id", id)
+      : state.supabaseClient.from("social_links").insert(payload);
+    const { error } = await request;
+    if (error) notify(`Sosyal link yerelde kaydedildi; Supabase hatası: ${error.message}`);
+    else await loadSiteSettings();
+  }
+  notify("Sosyal medya linki kaydedildi.");
+  renderAdmin();
+}
+
+async function deleteSocialLink(id) {
+  state.socialLinks = state.socialLinks.filter((link) => link.id !== id);
+  if (state.editingSocialId === id) state.editingSocialId = null;
+  if (state.supabaseReady && isUuid(id)) await state.supabaseClient.from("social_links").delete().eq("id", id);
+  notify("Sosyal medya linki silindi.");
+  renderAdmin();
+}
+
+async function saveFooterLink(form) {
+  const data = new FormData(form);
+  const id = String(data.get("footerLinkId") || "") || `footer-${Date.now()}`;
+  const link = {
+    id,
+    group: String(data.get("group") || "").trim(),
+    label: String(data.get("label") || "").trim(),
+    url: String(data.get("url") || "").trim(),
+    isActive: true,
+  };
+  if (!link.group || !link.label || !link.url) return;
+  state.footerLinks = state.footerLinks.some((item) => item.id === id) ? state.footerLinks.map((item) => (item.id === id ? link : item)) : [...state.footerLinks, link];
+  state.editingFooterLinkId = null;
+  if (state.supabaseReady) {
+    const payload = { link_group: link.group, label: link.label, url: link.url, is_active: true };
+    const request = isUuid(id)
+      ? state.supabaseClient.from("footer_links").update(payload).eq("id", id)
+      : state.supabaseClient.from("footer_links").insert(payload);
+    const { error } = await request;
+    if (error) notify(`Footer linki yerelde kaydedildi; Supabase hatası: ${error.message}`);
+    else await loadSiteSettings();
+  }
+  notify("Footer linki kaydedildi.");
+  renderAdmin();
+}
+
+async function deleteFooterLink(id) {
+  state.footerLinks = state.footerLinks.filter((link) => link.id !== id);
+  if (state.editingFooterLinkId === id) state.editingFooterLinkId = null;
+  if (state.supabaseReady && isUuid(id)) await state.supabaseClient.from("footer_links").delete().eq("id", id);
+  notify("Footer linki silindi.");
   renderAdmin();
 }
 
@@ -3366,6 +3682,8 @@ async function handleLogout() {
   state.authMode = "choice";
   state.editingChildId = null;
   state.editingExpenseId = null;
+  state.editingSocialId = null;
+  state.editingFooterLinkId = null;
   state.selectedMessageVendorId = null;
   notify("Çıkış yapıldı.");
   setRoute("home");
@@ -3614,6 +3932,34 @@ document.addEventListener("click", async (event) => {
       renderAdmin();
     }
   }
+  if (target.dataset.editSocial) {
+    state.editingSocialId = target.dataset.editSocial;
+    state.adminTab = "site";
+    renderAdmin();
+  }
+  if (target.dataset.deleteSocial) await deleteSocialLink(target.dataset.deleteSocial);
+  if (target.dataset.editFooterLink) {
+    state.editingFooterLinkId = target.dataset.editFooterLink;
+    state.adminTab = "site";
+    renderAdmin();
+  }
+  if (target.dataset.deleteFooterLink) await deleteFooterLink(target.dataset.deleteFooterLink);
+  if (target.dataset.categoryFilter) {
+    const form = app.querySelector("#filters");
+    if (form?.elements.category) {
+      form.elements.category.value = target.dataset.categoryFilter;
+      app.querySelector("#results")?.scrollIntoView({ behavior: "smooth" });
+      renderActivityGrid(filterActivities(new FormData(form)));
+    }
+  }
+  if (target.dataset.searchTag) {
+    const form = app.querySelector("#filters");
+    if (form?.elements.category) {
+      form.elements.category.value = target.dataset.searchTag;
+      app.querySelector("#results")?.scrollIntoView({ behavior: "smooth" });
+      renderActivityGrid(filterActivities(new FormData(form)));
+    }
+  }
 });
 
 document.addEventListener("submit", async (event) => {
@@ -3625,6 +3971,9 @@ document.addEventListener("submit", async (event) => {
   if (event.target.id === "expenseForm") await saveVendorExpense(event.target);
   if (event.target.id === "vendorMessageForm") await sendVendorMessage(event.target);
   if (event.target.id === "adminUserForm") await addAdminUser(event.target);
+  if (event.target.id === "siteSettingsForm") await saveSiteSettings(event.target);
+  if (event.target.id === "socialLinkForm") await saveSocialLink(event.target);
+  if (event.target.id === "footerLinkForm") await saveFooterLink(event.target);
   if (event.target.id === "loginForm") await handleLogin(event.target);
   if (event.target.id === "signupForm") await handleSignup(event.target);
   if (event.target.id === "childForm") await handleChildCreate(event.target);
@@ -3711,6 +4060,10 @@ document.addEventListener("submit", async (event) => {
     state.notifications.unshift({ id: `support-${Date.now()}`, text: "Destek talebiniz alındı.", meta: "Destek", route: "support" });
     notify("Destek talebi admin kuyruğuna gönderildi.");
     renderSupport();
+  }
+  if (event.target.id === "newsletterForm") {
+    notify("Bülten kaydınız alındı.");
+    event.target.reset();
   }
 });
 
