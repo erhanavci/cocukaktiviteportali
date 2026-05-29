@@ -176,6 +176,17 @@ create table if not exists public.commissions (
   status text not null default 'pending'
 );
 
+create table if not exists public.vendor_expenses (
+  id uuid primary key default gen_random_uuid(),
+  vendor_id uuid not null references public.vendors(id) on delete cascade,
+  title text not null,
+  amount numeric(12, 2) not null check (amount >= 0),
+  description text,
+  expense_date date not null default current_date,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.favorites (
   user_id uuid not null references public.profiles(id) on delete cascade,
   activity_id uuid not null references public.activities(id) on delete cascade,
@@ -387,6 +398,7 @@ alter table public.bookings enable row level security;
 alter table public.booking_participants enable row level security;
 alter table public.payments enable row level security;
 alter table public.commissions enable row level security;
+alter table public.vendor_expenses enable row level security;
 alter table public.favorites enable row level security;
 alter table public.activity_reviews enable row level security;
 alter table public.support_tickets enable row level security;
@@ -627,6 +639,17 @@ drop policy if exists "admin commissions" on public.commissions;
 create policy "admin commissions" on public.commissions
 for all using (public.is_admin())
 with check (public.is_admin());
+
+drop policy if exists "vendor expenses owner admin" on public.vendor_expenses;
+create policy "vendor expenses owner admin" on public.vendor_expenses
+for all using (public.is_admin() or exists (
+  select 1 from public.vendor_users vu
+  where vu.vendor_id = vendor_expenses.vendor_id and vu.user_id = auth.uid()
+))
+with check (public.is_admin() or exists (
+  select 1 from public.vendor_users vu
+  where vu.vendor_id = vendor_expenses.vendor_id and vu.user_id = auth.uid()
+));
 
 drop policy if exists "plans readable" on public.subscription_plans;
 create policy "plans readable" on public.subscription_plans

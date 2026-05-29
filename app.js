@@ -17,11 +17,13 @@ const state = {
   authRedirecting: false,
   autoRefreshTimer: null,
   supportTickets: [],
+  vendorExpenses: [],
   categories: ["Oyun grubu", "Sanat atölyesi", "Spor", "Müzik", "Dans", "Drama", "Müze/gezi", "Bilim/STEM", "Doğa", "Ebeveyn-çocuk", "Tatil kampı", "Düzenli kurs"],
   authMode: "choice",
   signupRole: "parent",
   editingChildId: null,
   editingActivityId: null,
+  editingExpenseId: null,
   supabaseClient: null,
   supabaseReady: false,
   supabaseConfigError: "",
@@ -540,6 +542,7 @@ async function loadMarketplaceData() {
   await loadBookingData();
   await loadReviewData();
   await loadSupportTickets();
+  await loadVendorExpenses();
   await loadAdminUsers();
 }
 
@@ -564,6 +567,26 @@ async function loadReviewData() {
       comment: review.comment || "",
       author: review.user?.full_name || review.user?.email || "Kullanıcı",
       createdAt: review.created_at,
+    }));
+  }
+}
+
+async function loadVendorExpenses() {
+  if (!state.supabaseReady || !state.currentUser || (!isVendor() && !isAdmin())) return;
+  const { data, error } = await state.supabaseClient
+    .from("vendor_expenses")
+    .select("*, vendor:vendors(name)")
+    .order("expense_date", { ascending: false });
+  if (!error && data) {
+    state.vendorExpenses = data.map((expense) => ({
+      id: expense.id,
+      vendorId: expense.vendor_id,
+      title: expense.title,
+      amount: Number(expense.amount || 0),
+      description: expense.description || "",
+      expenseDate: expense.expense_date,
+      vendorName: expense.vendor?.name || "",
+      createdAt: expense.created_at,
     }));
   }
 }
@@ -2105,23 +2128,55 @@ function bookingTable(bookings) {
 }
 
 function revenuePanel(bookings) {
+  const vendor = currentVendor();
+  const expenses = state.vendorExpenses.filter((expense) => expense.vendorId === vendor?.id);
+  const editingExpense = expenses.find((expense) => expense.id === state.editingExpenseId);
   const gross = bookings.reduce((sum, booking) => sum + booking.totalAmount, 0);
   const commission = bookings.reduce((sum, booking) => sum + booking.commissionAmount, 0);
+  const expenseTotal = expenses.reduce((sum, expense) => sum + expense.amount, 0);
   return `
     <div class="panel">
       <h3>Gelir özeti</h3>
       <div class="metrics-grid">
         <div class="metric-card"><span>Brüt satış</span><strong>${money(gross)}</strong></div>
         <div class="metric-card"><span>Platform komisyonu</span><strong>${money(commission)}</strong></div>
-        <div class="metric-card"><span>Net hak ediş</span><strong>${money(gross - commission)}</strong></div>
+        <div class="metric-card"><span>Giderler</span><strong>${money(expenseTotal)}</strong></div>
+        <div class="metric-card"><span>Net hak ediş</span><strong>${money(gross - commission - expenseTotal)}</strong></div>
         <div class="metric-card"><span>İade</span><strong>${money(0)}</strong></div>
       </div>
-      <form class="form-grid">
-        <label><span>Gider başlığı</span><input placeholder="Malzeme alımı" /></label>
-        <label><span>Tutar</span><input type="number" placeholder="1500" /></label>
-        <label class="wide"><span>Açıklama</span><textarea placeholder="Manuel gider girişi MVP alanı"></textarea></label>
-        <button class="ghost-action wide" type="button" data-notify="Gider kaydı demo olarak eklendi.">Gider ekle</button>
+      <form id="expenseForm" class="form-grid">
+        <input type="hidden" name="expenseId" value="${editingExpense?.id ?? ""}" />
+        <label><span>Gider başlığı</span><input name="title" required placeholder="Malzeme alımı" value="${editingExpense?.title ?? ""}" /></label>
+        <label><span>Tutar</span><input name="amount" type="number" min="0" step="1" required placeholder="1500" value="${editingExpense?.amount ?? ""}" /></label>
+        <label><span>Tarih</span><input name="expenseDate" type="date" value="${(editingExpense?.expenseDate ?? new Date().toISOString()).slice(0, 10)}" /></label>
+        <label class="wide"><span>Açıklama</span><textarea name="description" placeholder="Fatura, malzeme veya operasyon notu">${editingExpense?.description ?? ""}</textarea></label>
+        <div class="wide button-row">
+          <button class="ghost-action" type="submit">${editingExpense ? "Gideri güncelle" : "Gider ekle"}</button>
+          ${editingExpense ? `<button class="ghost-action" type="button" data-cancel-expense-edit>Düzenlemeyi iptal et</button>` : ""}
+        </div>
       </form>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Başlık</th><th>Tarih</th><th>Tutar</th><th>Açıklama</th><th>Aksiyon</th></tr></thead>
+          <tbody>${
+            expenses.length
+              ? expenses
+                  .map(
+                    (expense) => `
+                      <tr>
+                        <td>${expense.title}</td>
+                        <td>${expense.expenseDate ? dateTime(expense.expenseDate).split(" ")[0] : "-"}</td>
+                        <td>${money(expense.amount)}</td>
+                        <td>${expense.description || "-"}</td>
+                        <td><div class="button-row"><button class="ghost-action" data-edit-expense="${expense.id}">Düzenle</button><button class="ghost-action danger-action" data-delete-expense="${expense.id}">Sil</button></div></td>
+                      </tr>
+                    `,
+                  )
+                  .join("")
+              : `<tr><td colspan="5">Henüz gider kaydı yok.</td></tr>`
+          }</tbody>
+        </table>
+      </div>
     </div>
   `;
 }
@@ -2462,6 +2517,95 @@ async function updateVendorProfile(form) {
   }
 
   notify("Firma profili güncellendi.");
+  renderVendor();
+}
+
+async function saveVendorExpense(form) {
+  const vendor = currentVendor();
+  if (!vendor) {
+    notify("Gider eklemek için satıcı hesabı gerekli.");
+    return;
+  }
+  const data = new FormData(form);
+  const expenseId = String(data.get("expenseId") || "");
+  const expense = {
+    id: expenseId || `exp-${Date.now()}`,
+    vendorId: vendor.id,
+    title: String(data.get("title") || "").trim(),
+    amount: Number(data.get("amount") || 0),
+    description: String(data.get("description") || "").trim(),
+    expenseDate: String(data.get("expenseDate") || new Date().toISOString().slice(0, 10)),
+    vendorName: vendor.name,
+    createdAt: new Date().toISOString(),
+  };
+  if (!expense.title || expense.amount < 0) {
+    notify("Gider başlığı ve tutarı geçerli olmalı.");
+    return;
+  }
+
+  if (expenseId) {
+    state.vendorExpenses = state.vendorExpenses.map((item) => (item.id === expenseId ? { ...item, ...expense } : item));
+  } else {
+    state.vendorExpenses.unshift(expense);
+  }
+  state.editingExpenseId = null;
+  notify(expenseId ? "Gider güncelleniyor..." : "Gider kaydediliyor...");
+  renderVendor();
+
+  if (state.supabaseReady && isUuid(vendor.id)) {
+    const payload = {
+      vendor_id: vendor.id,
+      title: expense.title,
+      amount: expense.amount,
+      description: expense.description,
+      expense_date: expense.expenseDate,
+    };
+    const request = expenseId && isUuid(expenseId)
+      ? state.supabaseClient.from("vendor_expenses").update(payload).eq("id", expenseId).select("*").single()
+      : state.supabaseClient.from("vendor_expenses").insert(payload).select("*").single();
+    const { data: savedExpense, error } = await request;
+    if (error) {
+      notify(`Gider yerelde işlendi; Supabase kaydı başarısız: ${error.message}`);
+      return;
+    }
+    if (savedExpense) {
+      const normalized = {
+        id: savedExpense.id,
+        vendorId: savedExpense.vendor_id,
+        title: savedExpense.title,
+        amount: Number(savedExpense.amount || 0),
+        description: savedExpense.description || "",
+        expenseDate: savedExpense.expense_date,
+        vendorName: vendor.name,
+        createdAt: savedExpense.created_at,
+      };
+      state.vendorExpenses = [normalized, ...state.vendorExpenses.filter((item) => item.id !== expense.id && item.id !== normalized.id)];
+    }
+  }
+
+  notify(expenseId ? "Gider güncellendi." : "Gider eklendi.");
+  renderVendor();
+}
+
+async function deleteVendorExpense(id) {
+  const expense = state.vendorExpenses.find((item) => item.id === id);
+  if (!expense) return;
+  state.vendorExpenses = state.vendorExpenses.filter((item) => item.id !== id);
+  if (state.editingExpenseId === id) state.editingExpenseId = null;
+  notify("Gider siliniyor...");
+  renderVendor();
+
+  if (state.supabaseReady && isUuid(id)) {
+    const { error } = await state.supabaseClient.from("vendor_expenses").delete().eq("id", id);
+    if (error) {
+      state.vendorExpenses.unshift(expense);
+      notify(`Gider silinemedi: ${error.message}`);
+      renderVendor();
+      return;
+    }
+  }
+
+  notify("Gider silindi.");
   renderVendor();
 }
 
@@ -2920,6 +3064,7 @@ async function handleLogout() {
   state.notificationOpen = false;
   state.authMode = "choice";
   state.editingChildId = null;
+  state.editingExpenseId = null;
   notify("Çıkış yapıldı.");
   setRoute("home");
   if (client) await client.auth.signOut();
@@ -3032,7 +3177,7 @@ async function toggleFavorite(activityId) {
   render();
 }
 
-document.addEventListener("click", (event) => {
+document.addEventListener("click", async (event) => {
   const target = event.target.closest("button, a");
   if (!target) return;
 
@@ -3065,6 +3210,7 @@ document.addEventListener("click", (event) => {
   }
   if (target.dataset.vendorTab) {
     state.vendorTab = target.dataset.vendorTab;
+    state.editingExpenseId = null;
     renderVendor();
   }
   if (target.hasAttribute("data-new-activity")) {
@@ -3080,6 +3226,16 @@ document.addEventListener("click", (event) => {
     renderVendor();
   }
   if (target.dataset.deleteActivity) deleteActivity(target.dataset.deleteActivity);
+  if (target.dataset.editExpense) {
+    state.editingExpenseId = target.dataset.editExpense;
+    state.vendorTab = "revenue";
+    renderVendor();
+  }
+  if (target.dataset.deleteExpense) await deleteVendorExpense(target.dataset.deleteExpense);
+  if (target.hasAttribute("data-cancel-expense-edit")) {
+    state.editingExpenseId = null;
+    renderVendor();
+  }
   if (target.hasAttribute("data-cancel-activity-edit")) {
     state.editingActivityId = null;
     renderVendor();
@@ -3158,6 +3314,7 @@ document.addEventListener("submit", async (event) => {
   if (event.target.id === "reviewForm") await createReview(event.target);
   if (event.target.id === "activityForm") await createActivity(event.target);
   if (event.target.id === "vendorProfileForm") await updateVendorProfile(event.target);
+  if (event.target.id === "expenseForm") await saveVendorExpense(event.target);
   if (event.target.id === "adminUserForm") await addAdminUser(event.target);
   if (event.target.id === "loginForm") await handleLogin(event.target);
   if (event.target.id === "signupForm") await handleSignup(event.target);
