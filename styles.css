@@ -147,6 +147,19 @@ button {
   line-height: 18px;
 }
 
+.upgrade-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  margin-left: 8px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--teal);
+  color: #fff;
+  font-weight: 900;
+}
+
 .nav-link.active,
 .nav-link:hover,
 .tab-button.active {

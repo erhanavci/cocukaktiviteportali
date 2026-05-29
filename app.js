@@ -1317,6 +1317,7 @@ function updateNav() {
   const vendorButton = document.querySelector('[data-route="vendor"]');
   const supportButton = document.querySelector('[data-route="support"]');
   const pricingButton = document.querySelector('[data-route="pricing"]');
+  const aboutButton = document.querySelector('[data-scroll="aboutSection"]');
   const brandStrong = document.querySelector(".brand strong");
   const brandSmall = document.querySelector(".brand small");
   if (brandStrong) brandStrong.textContent = state.siteSettings.brandName;
@@ -1325,6 +1326,7 @@ function updateNav() {
   if (vendorButton) vendorButton.hidden = !isVendor();
   if (supportButton) supportButton.hidden = isAdmin();
   if (pricingButton) pricingButton.hidden = !isVendor();
+  if (aboutButton) aboutButton.hidden = Boolean(state.currentUser);
   if (notificationButton) {
     notificationButton.hidden = !state.currentUser;
     notificationButton.innerHTML = `<span aria-hidden="true">🔔</span>${unreadCount() ? `<b>${unreadCount()}</b>` : ""}`;
@@ -1450,6 +1452,7 @@ function renderHome() {
   if (heroText) heroText.textContent = state.siteSettings.heroText;
   if (aboutTitle) aboutTitle.textContent = state.siteSettings.aboutTitle;
   if (aboutText) aboutText.textContent = state.siteSettings.aboutText;
+  populateHeroLocations();
   app.querySelector('[data-stat="activityCount"]').textContent = activities.length;
   app.querySelector('[data-stat="sessionCount"]').textContent = activities.reduce((sum, activity) => sum + activity.sessions.length, 0);
   renderCategoryShowcase();
@@ -1458,6 +1461,13 @@ function renderHome() {
   renderActivityGrid(activities);
   setupHeroSearch();
   setupParallaxDots();
+}
+
+function populateHeroLocations() {
+  const select = app.querySelector('#heroSearch select[name="location"]');
+  if (!select) return;
+  const values = ["Tümü", ...new Set(publishedActivities().map((activity) => (isOnlineActivity(activity) ? "Online" : activity.district)).filter(Boolean))];
+  select.innerHTML = values.map((value) => `<option value="${value}">${value === "Tümü" ? "Tüm Konumlar" : value}</option>`).join("");
 }
 
 function heroTitleMarkup(title) {
@@ -1555,7 +1565,9 @@ function setupHeroSearch() {
   heroForm.addEventListener("submit", (event) => {
     event.preventDefault();
     filters.elements.query.value = heroForm.elements.query.value;
-    if (heroForm.elements.location.value === "Online") filters.elements.type.value = "Online";
+    const location = heroForm.elements.location.value;
+    if (location === "Online") filters.elements.type.value = "Online";
+    else if (location !== "Tümü") filters.elements.district.value = location;
     app.querySelector("#results")?.scrollIntoView({ behavior: "smooth" });
     renderActivityGrid(filterActivities(new FormData(filters)));
   });
@@ -1583,8 +1595,6 @@ function setupParallaxDots() {
 }
 
 function renderAuth() {
-  const modeLabel = state.supabaseReady ? "Supabase bağlı" : "Demo mod";
-
   if (state.currentUser) {
     app.innerHTML = `
       <section class="section-shell">
@@ -1592,7 +1602,7 @@ function renderAuth() {
           <div>
             <p class="eyebrow">Üyelik</p>
             <h2>Profil</h2>
-            <p class="muted">${modeLabel} · ${state.currentUser.email}</p>
+            <p class="muted">${state.currentUser.email}</p>
           </div>
           <button class="ghost-action" data-logout>Çıkış yap</button>
         </div>
@@ -1623,7 +1633,7 @@ function renderAuth() {
         <div>
           <p class="eyebrow">Üyelik sistemi</p>
           <h2>Giriş ve üyelik ayrı ilerler</h2>
-          <p class="muted">${modeLabel}. Supabase ayarı girildiğinde kayıt/giriş gerçek auth üzerinden yapılır.</p>
+          <p class="muted">Hesabınızla giriş yapın veya yeni üyelik oluşturun.</p>
           ${state.supabaseConfigError ? `<p class="status-pill red">${state.supabaseConfigError}</p>` : ""}
         </div>
       </div>
@@ -2374,8 +2384,8 @@ function renderBookings() {
           <h3>Rezervasyonlar</h3>
           <div class="sessions">
             ${
-              state.bookings.length
-                ? state.bookings.map(bookingCard).join("")
+              userBookings().length
+                ? userBookings().map(bookingCard).join("")
                 : `<div class="empty-state">Henüz rezervasyon yok. Keşfet ekranından bir seans seçebilirsiniz.</div>`
             }
           </div>
@@ -2405,6 +2415,11 @@ function renderBookings() {
   `;
 }
 
+function userBookings() {
+  if (isAdmin()) return state.bookings;
+  return state.bookings.filter((booking) => !booking.userId || booking.userId === state.currentUser?.id);
+}
+
 function bookingCard(booking) {
   const { activity, session } = getSession(booking.sessionId);
   const childIds = booking.childIds?.length ? booking.childIds : [booking.childId].filter(Boolean);
@@ -2425,6 +2440,7 @@ function bookingCard(booking) {
         <span class="tag">Ödeme: ${booking.paymentProvider}</span>
         <span class="tag">Katılımcı: ${childIds.length || 1}</span>
         <span class="tag">Tutar: ${money(booking.totalAmount)}</span>
+        ${booking.cancelReason ? `<span class="tag">İptal nedeni: ${booking.cancelReason}</span>` : ""}
         ${onlineLink ? `<a class="tag link-tag" href="${onlineLink}" target="_blank" rel="noreferrer">Google Meet</a>` : ""}
       </div>
       ${canCancelBooking(booking) ? `<button class="ghost-action danger-action" data-cancel-booking="${booking.id}">Rezervasyonu iptal et</button>` : ""}
@@ -2524,7 +2540,7 @@ function renderVendor() {
         <div>
           <p class="eyebrow">Satıcı paneli</p>
           <h2>${vendor.name}</h2>
-          <p class="muted">Free plan · satış başı %${Math.round(vendor.commissionRate * 100)} komisyon</p>
+          <p class="muted">Free plan · satış başı %${Math.round(vendor.commissionRate * 100)} komisyon <button class="upgrade-chip" data-route="pricing">Upgrade</button></p>
         </div>
         <div class="vendor-header-profile">
           <span class="vendor-logo-thumb">${vendor.logoUrl ? `<img src="${vendor.logoUrl}" alt="${vendor.name} logo" />` : userInitials()}</span>
@@ -2577,13 +2593,15 @@ function bookingRevenueSummary(bookings) {
   const gross = sales.reduce((sum, booking) => sum + booking.totalAmount, 0);
   const refundTotal = refunds.reduce((sum, booking) => sum + booking.totalAmount, 0);
   const commission = sales.reduce((sum, booking) => sum + booking.commissionAmount, 0);
+  const refundedCommission = refunds.reduce((sum, booking) => sum + booking.commissionAmount, 0);
   return {
     salesCount: sales.length,
     refundCount: refunds.length,
     gross,
     refunds: refundTotal,
     commission,
-    net: gross - refundTotal - commission,
+    refundedCommission,
+    net: gross - refundTotal - commission + refundedCommission,
   };
 }
 
@@ -2768,6 +2786,7 @@ function revenuePanel(bookings) {
         <div class="metric-card"><span>Toplam satış geliri</span><strong>${money(summary.gross)}</strong></div>
         <div class="metric-card"><span>Yapılan iadeler</span><strong>${money(summary.refunds)}</strong></div>
         <div class="metric-card"><span>Platform komisyonu</span><strong>${money(summary.commission)}</strong></div>
+        <div class="metric-card"><span>İade edilen komisyon</span><strong>${money(summary.refundedCommission)}</strong></div>
         <div class="metric-card"><span>Giderler</span><strong>${money(expenseTotal)}</strong></div>
         <div class="metric-card"><span>Net gelir</span><strong>${money(summary.net - expenseTotal)}</strong></div>
         <div class="metric-card"><span>İade adedi</span><strong>${summary.refundCount}</strong></div>
@@ -2833,6 +2852,13 @@ function activityInsightRows(activities) {
 function insightPanel(activities) {
   const rows = activityInsightRows(activities);
   const sorted = [...rows].sort((a, b) => b.revenue - a.revenue);
+  const byVendor = [...new Set(activities.map((activity) => activity.vendorId))]
+    .map((vendorId) => {
+      const vendorActivities = activities.filter((activity) => activity.vendorId === vendorId);
+      const vendorRows = activityInsightRows(vendorActivities);
+      return { vendor: getVendor(vendorId), rows: vendorRows };
+    })
+    .filter((group) => group.vendor);
   return `
     <div class="panel">
       <h3>İstatistik / Insight</h3>
@@ -2848,6 +2874,23 @@ function insightPanel(activities) {
           <tbody>${sorted.map((row) => `<tr><td>${row.activity.title}</td><td>${row.sales}</td><td>${money(row.revenue)}</td><td>${row.comments}</td><td>${row.rating ? row.rating.toFixed(1) : "-"}</td><td>%${Math.round(row.refundRate * 100)}</td><td>${money(row.refundAmount)}</td></tr>`).join("") || `<tr><td colspan="7">İstatistik için kayıt yok.</td></tr>`}</tbody>
         </table>
       </div>
+      ${
+        isAdmin()
+          ? byVendor
+              .map(
+                (group) => `
+                  <h3>${group.vendor.name}</h3>
+                  <div class="table-wrap">
+                    <table>
+                      <thead><tr><th>Kurs</th><th>Satış</th><th>Gelir</th><th>Yorum</th><th>Puan</th><th>İade oranı</th></tr></thead>
+                      <tbody>${group.rows.map((row) => `<tr><td>${row.activity.title}</td><td>${row.sales}</td><td>${money(row.revenue)}</td><td>${row.comments}</td><td>${row.rating ? row.rating.toFixed(1) : "-"}</td><td>%${Math.round(row.refundRate * 100)}</td></tr>`).join("") || `<tr><td colspan="6">Kayıt yok.</td></tr>`}</tbody>
+                    </table>
+                  </div>
+                `,
+              )
+              .join("")
+          : ""
+      }
     </div>
   `;
 }
@@ -3798,20 +3841,20 @@ function adminPaymentTable() {
 }
 
 function adminCommissionTable() {
-  const totalGross = state.bookings.reduce((sum, booking) => sum + booking.totalAmount, 0);
-  const totalCommission = state.bookings.reduce((sum, booking) => sum + booking.commissionAmount, 0);
+  const summary = bookingRevenueSummary(state.bookings);
   return `
     <div class="panel">
       <div class="metrics-grid">
-        <div class="metric-card"><span>Toplam ciro</span><strong>${money(totalGross)}</strong></div>
-        <div class="metric-card"><span>Toplam komisyon</span><strong>${money(totalCommission)}</strong></div>
-        <div class="metric-card"><span>Satıcı hak edişi</span><strong>${money(totalGross - totalCommission)}</strong></div>
+        <div class="metric-card"><span>Toplam ciro</span><strong>${money(summary.gross)}</strong></div>
+        <div class="metric-card"><span>Toplam komisyon</span><strong>${money(summary.commission)}</strong></div>
+        <div class="metric-card"><span>İade edilen komisyon</span><strong>${money(summary.refundedCommission)}</strong></div>
+        <div class="metric-card"><span>Satıcı hak edişi</span><strong>${money(summary.net)}</strong></div>
         <div class="metric-card"><span>Payout</span><strong>pending</strong></div>
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Booking</th><th>Oran</th><th>Komisyon</th><th>Payout</th></tr></thead>
-          <tbody>${state.bookings.map((booking) => `<tr><td>${booking.id}</td><td>%${Math.round(booking.commissionRate * 100)}</td><td>${money(booking.commissionAmount)}</td><td>pending</td></tr>`).join("") || `<tr><td colspan="4">Komisyon kaydı yok.</td></tr>`}</tbody>
+          <thead><tr><th>Booking</th><th>Oran</th><th>Komisyon</th><th>İade komisyonu</th><th>Payout</th></tr></thead>
+          <tbody>${state.bookings.map((booking) => `<tr><td>${booking.id}</td><td>%${Math.round(booking.commissionRate * 100)}</td><td>${money(paidStatus(booking.status) ? booking.commissionAmount : 0)}</td><td>${money(refundableStatus(booking.status) ? booking.commissionAmount : 0)}</td><td>pending</td></tr>`).join("") || `<tr><td colspan="5">Komisyon kaydı yok.</td></tr>`}</tbody>
         </table>
       </div>
     </div>
@@ -3992,12 +4035,13 @@ async function refundBooking(id) {
   }
   booking.status = "refunded";
   booking.cancelledAt = new Date().toISOString();
+  booking.cancelReason = "Admin tarafından iade başlatıldı.";
   syncSessionReservationsFromBookings();
 
   if (state.supabaseReady && isUuid(id)) {
     const { error } = await state.supabaseClient
       .from("bookings")
-      .update({ status: "refunded", cancelled_at: booking.cancelledAt })
+      .update({ status: "refunded", cancelled_at: booking.cancelledAt, cancel_reason: booking.cancelReason })
       .eq("id", id);
     if (error) {
       notify(`İade yerelde işlendi; Supabase güncellenemedi: ${error.message}`);
